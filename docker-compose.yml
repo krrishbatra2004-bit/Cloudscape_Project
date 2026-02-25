@@ -1,0 +1,21 @@
+﻿services:
+  moto:
+    container_name: moto_enterprise
+    image: motoserver/moto:latest
+    ports:
+      - "4566:5000"
+    volumes:
+      # SYNCED: This matches your new "Disk image location" root
+      - "E:/Cloudscape_Data/DockerDesktopWSL/moto_data:/persist"
+
+  neo4j:
+    container_name: cloudscape_graph
+    image: neo4j:latest
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    volumes:
+      # SYNCED: Keeping all project data in the same E: subfolder
+      - "E:/Cloudscape_Data/DockerDesktopWSL/neo4j_data:/data"

@@ -1,0 +1,67 @@
+# ==========================================================
+# CLOUDSCAPE: CORE REPOSITORY EXCLUSION RULES
+# ==========================================================
+
+# --- [1] PYTHON / ENVIRONMENT ---
+.venv/
+venv/
+env/
+ENV/
+bin/
+lib/
+include/
+build/
+dist/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.installed.cfg
+.pip-wheel-metadata/
+
+# --- [2] CLOUDSCAPE VAULT (E: DRIVE REDIRECTION) ---
+# We ignore all local persistence to keep the repo lightweight
+logs/
+manifests/
+neo4j_data/
+moto_data/
+disk/
+tests/data/
+*.log
+*.json
+*.vhd
+*.vhdx
+*.vdi
+*.vbox
+
+# --- [3] SECRETS & LOCAL OVERRIDES ---
+.env
+.env.*
+!.env.example
+settings.json
+*.local.py
+secrets.yaml
+
+# --- [4] IDE / EDITOR METADATA ---
+.vscode/
+.idea/
+*.swp
+*.bak
+*.tmp
+.project
+.pydevproject
+.settings/
+
+# --- [5] DASHBOARD & ANALYTICS ---
+.streamlit/
+.plotly_gw_cache/
+.ipynb_checkpoints
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- [6] OS SPECIFIC NOISE ---
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
