@@ -1,21 +1,134 @@
-﻿services:
-  moto:
-    container_name: moto_enterprise
-    image: motoserver/moto:latest
-    ports:
-      - "4566:5000"
-    volumes:
-      # SYNCED: This matches your new "Disk image location" root
-      - "E:/Cloudscape_Data/DockerDesktopWSL/moto_data:/persist"
+﻿version: "3.8"
 
-  neo4j:
-    container_name: cloudscape_graph
-    image: neo4j:latest
+# ==============================================================================
+# PROJECT CLOUDSCAPE: ENTERPRISE MESH INFRASTRUCTURE
+# ==============================================================================
+# This defines the "Pre-Production" multi-tenant local simulation.
+# It provisions isolated AWS environments, an Azure node, and the Graph Engine.
+
+services:
+  # ----------------------------------------------------------------------------
+  # [1] THE GRAPH ENGINE: Neo4j (The Correlation Core)
+  # ----------------------------------------------------------------------------
+  neo4j-core:
+    image: neo4j:5.16.0
+    container_name: cloudscape_neo4j
+    hostname: graph.cloudscape.local
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "7474:7474"   # HTTP Browser UI
+      - "7687:7687"   # Bolt Protocol for Python Processor
     environment:
-      - NEO4J_AUTH=neo4j/password
+      - NEO4J_AUTH=neo4j/Cloudscape2026!
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_enabled=true
+      - NEO4J_apoc_import_file_use__neo4j__config=true
+      - NEO4J_dbms_memory_heap_initial__size=1G
+      - NEO4J_dbms_memory_heap_max__size=2G
     volumes:
-      # SYNCED: Keeping all project data in the same E: subfolder
-      - "E:/Cloudscape_Data/DockerDesktopWSL/neo4j_data:/data"
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    networks:
+      - cloudscape-mesh
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # [2] TENANT A: AWS Finance (High-Security Environment)
+  # ----------------------------------------------------------------------------
+  aws-finance:
+    image: localstack/localstack:latest # Will fallback to community if no API key
+    container_name: cloudscape_aws_finance
+    ports:
+      - "4566:4566"   # Edge port mapping for Tenant A
+    environment:
+      - DEBUG=1
+      - SERVICES=iam,s3,ec2,rds,sts,secretsmanager
+      - DEFAULT_REGION=us-east-1
+      - AWS_ACCOUNT_ID=111111111111
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - aws_finance_data:/var/lib/localstack
+    networks:
+      - cloudscape-mesh
+
+  # ----------------------------------------------------------------------------
+  # [3] TENANT B: AWS Production (Customer Facing)
+  # ----------------------------------------------------------------------------
+  aws-production:
+    image: localstack/localstack:latest
+    container_name: cloudscape_aws_production
+    ports:
+      - "4567:4566"   # Edge port mapping for Tenant B
+    environment:
+      - DEBUG=0
+      - SERVICES=iam,s3,ec2,elbv2,rds,sts
+      - DEFAULT_REGION=us-west-2
+      - AWS_ACCOUNT_ID=222222222222
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - aws_production_data:/var/lib/localstack
+    networks:
+      - cloudscape-mesh
+
+  # ----------------------------------------------------------------------------
+  # [4] TENANT C: AWS Shared Services (Networking Hub)
+  # ----------------------------------------------------------------------------
+  aws-shared-services:
+    image: localstack/localstack:latest
+    container_name: cloudscape_aws_shared
+    ports:
+      - "4568:4566"   # Edge port mapping for Tenant C
+    environment:
+      - DEBUG=0
+      - SERVICES=iam,ec2,sts
+      - DEFAULT_REGION=us-east-1
+      - AWS_ACCOUNT_ID=333333333333
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - aws_shared_data:/var/lib/localstack
+    networks:
+      - cloudscape-mesh
+
+  # ----------------------------------------------------------------------------
+  # [5] TENANT D: Azure Core (Cross-Cloud Identity)
+  # ----------------------------------------------------------------------------
+  azure-core:
+    image: mcr.microsoft.com/azure-storage/azurite
+    container_name: cloudscape_azure_core
+    ports:
+      - "10000:10000" # Blob Storage
+      - "10001:10001" # Queue Storage
+      - "10002:10002" # Table Storage
+    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0"
+    volumes:
+      - azure_data:/workspace
+    networks:
+      - cloudscape-mesh
+
+# ==============================================================================
+# ISOLATED NETWORKING & PERSISTENCE
+# ==============================================================================
+networks:
+  cloudscape-mesh:
+    driver: bridge
+    name: cloudscape_enterprise_mesh
+
+volumes:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  aws_finance_data:
+    driver: local
+  aws_production_data:
+    driver: local
+  aws_shared_data:
+    driver: local
+  azure_data:
+    driver: local

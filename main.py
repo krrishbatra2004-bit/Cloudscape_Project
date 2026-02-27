@@ -1,138 +1,128 @@
-import json
-import logging
-import time
 import sys
-from datetime import datetime
-from typing import Dict, Any
+import time
+import asyncio
+import argparse
+import logging
+from typing import List
 
-# Ensure module pathing is absolute for script execution
-from pathlib import Path
-root_path = Path(__file__).resolve().parent
-if str(root_path) not in sys.path:
-    sys.path.append(str(root_path))
+# Import our custom enterprise modules
+from core.config import settings, tenants
+from core.orchestrator import DiscoveryOrchestrator
+from core.simulation.enterprise_seeder import EnterpriseMeshSeeder
 
-from core.config import settings
-from drivers.aws_driver import AWSDriver
-from core.processor import GraphCorrelationEngine
+# ==============================================================================
+# PROJECT CLOUDSCAPE 2026: MASTER EXECUTION ENGINE
+# ==============================================================================
 
-def setup_enterprise_logging() -> logging.Logger:
-    """
-    Initializes a dual-stream logging architecture.
-    Ensures the E: Drive Vault directory structure exists BEFORE attempting to write logs.
-    Strictly enforces UTF-8 encoding to prevent Windows cp1252 charmap crashes.
-    """
-    # 1. Initialize Physical Storage (E: Drive Vault)
-    settings.setup_vault()
-
-    # 2. Configure Global Logging Format
-    log_formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s'
+def setup_logger(debug_mode: bool) -> logging.Logger:
+    """Configures a professional, timestamped console logger."""
+    log_level = logging.DEBUG if debug_mode else logging.INFO
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)]
     )
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    
+    # Silence noisy third-party libraries
+    logging.getLogger("boto3").setLevel(logging.WARNING)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.WARNING)
 
-    # Clear existing handlers to prevent duplicate logs in interactive environments
-    if root_logger.hasHandlers():
-        root_logger.handlers.clear()
+    return logging.getLogger("Cloudscape.CLI")
 
-    # 3. File Handler: Immutable Audit Trail on E: Drive (FORCED UTF-8)
-    log_file_path = settings.LOG_DIR / "orchestrator_security_audit.log"
-    file_handler = logging.FileHandler(log_file_path, mode='a', encoding='utf-8')
-    file_handler.setFormatter(log_formatter)
-    root_logger.addHandler(file_handler)
-
-    # 4. Console Handler: Real-time Terminal Feedback (FORCED UTF-8 for Windows compatibility)
-    # Using sys.stdout and wrapping it if necessary, though modern PowerShell handles stdout utf-8 well.
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(log_formatter)
-    root_logger.addHandler(console_handler)
-
-    return logging.getLogger("Cloudscape_Pipeline")
-
-class CloudscapePipeline:
+def print_banner():
+    """Generates the startup banner for the CLI."""
+    banner = """
+    ====================================================================
+      ██████╗██╗      ██████╗ ██╗   ██╗██████╗ ███████╗ ██████╗ █████╗ ██████╗ ███████╗
+     ██╔════╝██║     ██╔═══██╗██║   ██║██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗██╔════╝
+     ██║     ██║     ██║   ██║██║   ██║██║  ██║███████╗██║     ███████║██████╔╝█████╗  
+     ██║     ██║     ██║   ██║██║   ██║██║  ██║╚════██║██║     ██╔══██║██╔═══╝ ██╔══╝  
+     ╚██████╗███████╗╚██████╔╝╚██████╔╝██████╔╝███████║╚██████╗██║  ██║██║     ███████╗
+      ╚═════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝     ╚══════╝
+    ====================================================================
+    ENTERPRISE CLOUD DISCOVERY & GRAPH CORRELATION FABRIC (v2.0)
+    ====================================================================
     """
-    The Central Nervous System of Project Cloudscape.
-    Manages the synchronous lifecycle: Discovery -> Audit Persistence -> Graph Correlation.
-    """
-    def __init__(self, logger: logging.Logger):
-        self.logger = logger
-        self.config = settings
-        
-        # Initialize Sub-Engines
-        self.logger.info("Initializing Omni-Layer AWS Driver...")
-        self.aws_driver = AWSDriver()
-        
-        self.logger.info("Initializing Neo4j Graph Correlation Engine...")
-        self.graph_engine = GraphCorrelationEngine()
+    print(banner)
 
-    def _persist_audit_manifest(self, data: Dict[str, Any], provider: str):
-        """
-        Saves the exhaustive cloud state to the E: Drive Vault.
-        Creates a timestamped forensic copy and a 'latest' symlink for the UI.
-        """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_path = self.config.MANIFEST_DIR / f"audit_{provider}_{timestamp}.json"
-        latest_path = self.config.MANIFEST_DIR / f"{provider}_latest.json"
+def run_seeder(logger: logging.Logger):
+    """Executes the vulnerable-by-design infrastructure seeder."""
+    logger.info("Initializing LocalStack Infrastructure Seeder...")
+    start_time = time.time()
+    
+    seeder = EnterpriseMeshSeeder(tenants)
+    seeder.run()
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Seeding completed in {elapsed:.2f} seconds.")
 
-        try:
-            # Save Point-in-Time Forensic Audit
-            with open(save_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4, default=str)
+async def run_discovery_mesh(logger: logging.Logger):
+    """Executes the asynchronous multi-tenant discovery and graph ingestion."""
+    logger.info("Initializing Asynchronous Discovery Orchestrator...")
+    start_time = time.time()
+    
+    orchestrator = DiscoveryOrchestrator(tenants)
+    await orchestrator.execute_mesh_scan()
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Enterprise Mesh Discovery completed in {elapsed:.2f} seconds.")
+
+def main():
+    """Main CLI Entry Point."""
+    parser = argparse.ArgumentParser(
+        description="Cloudscape: Multi-Tenant Cloud Security Graph Engine",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    
+    # Define CLI Arguments
+    parser.add_argument(
+        "--mode", 
+        type=str, 
+        choices=["seed", "scan", "full"], 
+        default="full",
+        help="Execution mode:\n"
+             "  seed : Builds the vulnerable mock infrastructure in LocalStack.\n"
+             "  scan : Runs the Discovery Engines and ingests to Neo4j.\n"
+             "  full : (Default) Runs seed, waits 5 seconds, then runs scan."
+    )
+    parser.add_argument(
+        "--debug", 
+        action="store_true", 
+        help="Enable verbose debug logging."
+    )
+
+    args = parser.parse_args()
+    logger = setup_logger(args.debug)
+    print_banner()
+
+    try:
+        if args.mode in ["seed", "full"]:
+            logger.info("--- PHASE 1: MESH SEEDING ---")
+            run_seeder(logger)
             
-            # Save Hot-Swap File for Dashboard
-            with open(latest_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4, default=str)
-                
-            self.logger.info(f"✔ Security Audit Manifest persisted to Vault: {save_path.name}")
-        except Exception as e:
-            self.logger.critical(f"✖ CRITICAL: Failed to persist audit manifest to E: Drive: {e}")
-            raise  # Rethrow because if we can't save the audit, the pipeline must halt.
+            if args.mode == "full":
+                logger.info("Cooling down for 5 seconds to ensure eventual consistency...")
+                time.sleep(5)
 
-    def execute_sync(self, wipe_graph: bool = False):
-        """
-        Executes the end-to-end cloud discovery and ingestion cycle.
-        """
-        start_time = time.time()
-        self.logger.info("="*60)
-        self.logger.info("🚀 INITIATING ENTERPRISE CLOUDSCAPE SYNC CYCLE")
-        self.logger.info("="*60)
-
-        try:
-            # Phase 0: Graph Database Reset (For clean presentations/demos)
-            if wipe_graph:
-                self.logger.warning("Phase 0: Wiping existing Knowledge Graph...")
-                self.graph_engine.reset_graph()
-
-            # Phase 1: Exhaustive Discovery (The 'Driver')
-            self.logger.info("Phase 1: Executing Deep Cloud Discovery...")
-            aws_inventory = self.aws_driver.get_full_inventory()
-
-            # Phase 2: Immutability & Persistence (The 'Vault')
-            self.logger.info("Phase 2: Archiving State to Secure Vault...")
-            self._persist_audit_manifest(aws_inventory, "aws")
-
-            # Phase 3: Graph Translation (The 'Processor')
-            self.logger.info("Phase 3: Translating State into Neo4j Risk Graph...")
-            self.graph_engine.ingest_aws_manifest(aws_inventory)
-
-            # Execution Metrics
-            duration = round(time.time() - start_time, 2)
-            self.logger.info("="*60)
-            self.logger.info(f"✅ SYNC COMPLETE (Duration: {duration}s)")
-            self.logger.info("="*60)
-
-        except Exception as e:
-            self.logger.critical(f"❌ PIPELINE CRASH: {str(e)}", exc_info=True)
-        finally:
-            # Ensure database connections are returned to the pool
-            self.graph_engine.close()
-            self.logger.info("System teardown complete. Engines safely offline.")
+        if args.mode in ["scan", "full"]:
+            logger.info("--- PHASE 2: GRAPH DISCOVERY ---")
+            # We must use asyncio.run() to properly manage the async event loop
+            asyncio.run(run_discovery_mesh(logger))
+            
+        logger.info("SUCCESS: Cloudscape execution pipeline finished without errors.")
+        
+    except KeyboardInterrupt:
+        print("\n")
+        logger.warning("Execution interrupted by user (Ctrl+C). Shutting down gracefully...")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"FATAL ERROR: An unhandled exception crashed the pipeline: {e}", exc_info=args.debug)
+        sys.exit(1)
 
 if __name__ == "__main__":
-    # 1. Bootstrap Logging and Drive Verification
-    orchestrator_logger = setup_enterprise_logging()
-    
-    # 2. Instantiate and Run the Pipeline
-    # wipe_graph=True is set so every time you run main.py, you get a fresh, clean topology.
-    pipeline = CloudscapePipeline(orchestrator_logger)
-    pipeline.execute_sync(wipe_graph=True)
+    main()

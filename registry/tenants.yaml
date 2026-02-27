@@ -1,0 +1,76 @@
+# ==============================================================================
+# PROJECT CLOUDSCAPE: GLOBAL TENANT REGISTRY
+# ==============================================================================
+# This file acts as the primary mapping logic for the Discovery Orchestrator.
+# It defines every isolated environment (Tenant/Project) in the enterprise mesh.
+
+tenants:
+  # ----------------------------------------------------------------------------
+  # [1] TENANT A: AWS Finance (High-Security Environment)
+  # ----------------------------------------------------------------------------
+  - id: "PROJ-FIN-01"
+    name: "Finance_Data_Vault"
+    provider: "aws"
+    account_id: "111111111111"
+    region: "us-east-1"
+    endpoint_url: "http://localhost:4566"
+    risk_weight: 0.95
+    tags:
+      - "pci-dss"
+      - "critical"
+      - "production"
+    auth:
+      aws_access_key_id: "mock_finance_key"
+      aws_secret_access_key: "mock_finance_secret"
+
+  # ----------------------------------------------------------------------------
+  # [2] TENANT B: AWS Production (Customer Facing)
+  # ----------------------------------------------------------------------------
+  - id: "PROJ-PROD-02"
+    name: "Customer_Facing_Web"
+    provider: "aws"
+    account_id: "222222222222"
+    region: "us-west-2"
+    endpoint_url: "http://localhost:4567"
+    risk_weight: 0.75
+    tags:
+      - "public-facing"
+      - "production"
+    auth:
+      aws_access_key_id: "mock_prod_key"
+      aws_secret_access_key: "mock_prod_secret"
+
+  # ----------------------------------------------------------------------------
+  # [3] TENANT C: AWS Shared Services (Networking Hub)
+  # ----------------------------------------------------------------------------
+  - id: "PROJ-SHR-03"
+    name: "Shared_Infrastructure_Hub"
+    provider: "aws"
+    account_id: "333333333333"
+    region: "us-east-1"
+    endpoint_url: "http://localhost:4568"
+    risk_weight: 0.60
+    tags:
+      - "internal"
+      - "transit-hub"
+      - "iam-central"
+    auth:
+      aws_access_key_id: "mock_shared_key"
+      aws_secret_access_key: "mock_shared_secret"
+
+  # ----------------------------------------------------------------------------
+  # [4] TENANT D: Azure Core (Cross-Cloud Identity)
+  # ----------------------------------------------------------------------------
+  - id: "PROJ-AZURE-04"
+    name: "Azure_Identity_Core"
+    provider: "azure"
+    tenant_id: "mock-azure-tenant-id-0000"
+    region: "eastus"
+    endpoint_url: "http://localhost:10000"
+    risk_weight: 0.85
+    tags:
+      - "identity-provider"
+      - "cross-cloud"
+    auth:
+      azure_client_id: "mock_azure_client"
+      azure_client_secret: "mock_azure_secret"

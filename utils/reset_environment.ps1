@@ -1,27 +1,25 @@
-$ErrorActionPreference = "SilentlyContinue"
+# ==============================================================================
+# PROJECT CLOUDSCAPE: SYSTEM DEEP-CLEAN & RESET
+# ==============================================================================
 
-Write-Host "--- PROJECT CLOUDSCAPE: SYSTEM PURGE ---" -ForegroundColor Cyan
+Write-Host "`n--- [PHASE 1: DOCKER TERMINATION] ---" -ForegroundColor Cyan
 
-Write-Host "1. Cleaning Processes..." -ForegroundColor Yellow
-docker compose down --volumes --remove-orphans
-wsl --shutdown
-Stop-Process -Name "Docker Desktop" -Force
-Stop-Process -Name "com.docker.backend" -Force
-Stop-Process -Name "wslhost" -Force
+# 1. Stop all containers and remove volumes (wipes Neo4j and LocalStack state)
+Write-Host "[*] Stopping containers and wiping volumes..." -ForegroundColor Yellow
+docker-compose down -v
 
-Write-Host "2. Clearing WSL Registry..." -ForegroundColor Yellow
-wsl --unregister docker-desktop
-wsl --unregister docker-desktop-data
+# 2. Prune orphan networks that might cause IP conflicts
+Write-Host "[*] Cleaning orphan networks..." -ForegroundColor Yellow
+docker network prune -f
 
-Write-Host "3. Wiping E: Drive Vault..." -ForegroundColor Yellow
-Remove-Item -Path "E:\Cloudscape_Data\DockerDesktopWSL\*" -Recurse -Force
+Write-Host "`n--- [PHASE 2: FILESYSTEM SANITATION] ---" -ForegroundColor Cyan
 
-Write-Host "4. Rebuilding Folders..." -ForegroundColor Yellow
-New-Item -ItemType Directory -Force -Path "E:\Cloudscape_Data\DockerDesktopWSL"
-New-Item -ItemType Directory -Force -Path "E:\Cloudscape_Data\DockerDesktopWSL\manifests"
-New-Item -ItemType Directory -Force -Path "E:\Cloudscape_Data\DockerDesktopWSL\logs"
-New-Item -ItemType Directory -Force -Path "E:\Cloudscape_Data\DockerDesktopWSL\moto_data"
-New-Item -ItemType Directory -Force -Path "E:\Cloudscape_Data\DockerDesktopWSL\neo4j_data"
-New-Item -ItemType Directory -Force -Path "E:\Cloudscape_Data\DockerDesktopWSL\disk"
+# 3. Recursively remove all __pycache__ folders to prevent import logic errors
+Write-Host "[*] Purging Python bytecode caches..." -ForegroundColor Yellow
+Get-ChildItem -Path . -Include __pycache__ -Recurse | Remove-Item -Recurse -Force
 
-Write-Host "--- RESET COMPLETE ---" -ForegroundColor Cyan
+# 4. Remove temporary log and data files from the forensic tier (E: Drive or local)
+Write-Host "[*] Clearing temporary logs..." -ForegroundColor Yellow
+Remove-Item -Path ".\logs\*" -Filter *.log -ErrorAction SilentlyContinue
+
+Write-Host "`n[SUCCESS] Environment is now pristine. Run launch/cloudscape.ps1 next." -ForegroundColor Green
