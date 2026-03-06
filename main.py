@@ -1,74 +1,31 @@
-import os
-import sys
-import time
-import signal
+import argparse
 import asyncio
 import logging
-import argparse
-import platform
+import os
+import sys
+import subprocess
+import time
 
 # ==============================================================================
-# ENTERPRISE PRE-FLIGHT CHECKS
+# CLOUDSCAPE NEXUS 5.0 - MASTER ENTRYPOINT
 # ==============================================================================
-# Ensure we are running a supported Python version before importing complex modules
-if sys.version_info < (3, 9):
-    sys.exit("FATAL: Project Cloudscape Nexus v4.0 requires Python 3.9 or higher.")
+# The Command and Control (C2) interface for the Cloudscape architecture.
+# Features automated mock credential injection and regional synchronization.
+# ==============================================================================
 
-# ==============================================================================
-# CORE SYSTEM IMPORTS
-# ==============================================================================
-# We import configuration first to bootstrap the logging singleton
-from core.config import config
-from core.orchestrator import CloudscapeOrchestrator
-
+# Configure Global Base Logging
+os.makedirs("forensics/logs", exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(f"forensics/logs/cloudscape_engine_{int(time.time())}.log")
+    ]
+)
 logger = logging.getLogger("Cloudscape.CLI")
 
-# ==============================================================================
-# ENTERPRISE EVENT LOOP OPTIMIZATION
-# ==============================================================================
-def optimize_event_loop():
-    """
-    Conditionally injects 'uvloop' if running on Linux/macOS.
-    uvloop is written in Cypher/C and makes AsyncIO 2-4x faster, which is 
-    critical for handling 10,000+ simultaneous API socket connections.
-    Windows does not support uvloop, so we gracefully fall back to the native loop.
-    """
-    if platform.system() != "Windows":
-        try:
-            import uvloop
-            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-            logger.info("Platform optimization applied: uvloop EventLoopPolicy injected.")
-        except ImportError:
-            logger.warning("uvloop not installed. Using standard asyncio event loop.")
-    else:
-        # Windows specific optimization for asyncio subprocesses
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        logger.debug("Windows platform detected: standard EventLoopPolicy applied.")
-
-# ==============================================================================
-# GRACEFUL SHUTDOWN HANDLER
-# ==============================================================================
-def handle_sigint(sig, frame):
-    """
-    Catches OS-level termination signals (Ctrl+C, Docker Stop).
-    Prevents database corruption by giving the Orchestrator a moment to 
-    finish its current Cypher UNWIND transaction before exiting.
-    """
-    logger.critical(f"\n[!] RECEIVED TERMINATION SIGNAL ({sig}). Initiating graceful shutdown...")
-    logger.critical("[!] Please wait while database connection pools are closed. Do not force quit.")
-    
-    # We cancel all running tasks in the current loop
-    loop = asyncio.get_event_loop()
-    for task in asyncio.all_tasks(loop=loop):
-        task.cancel()
-    
-    # The loop's exception handler will catch the CancelledError and exit cleanly
-    pass 
-
-# ==============================================================================
-# CLI DEFINITION & ASCII ART
-# ==============================================================================
-def print_banner():
+def print_cloudscape_banner():
     banner = f"""
     ██████╗██╗      ██████╗ ██╗   ██╗██████╗ ███████╗ ██████╗ █████╗ ██████╗ ███████╗
     ██╔════╝██║     ██╔═══██╗██║   ██║██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗██╔════╝
@@ -77,87 +34,115 @@ def print_banner():
     ╚██████╗███████╗╚██████╔╝╚██████╔╝██████╔╝███████║╚██████╗██║  ██║██║     ███████╗
      ╚═════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝     ╚══════╝
     ==================================================================================
-    NEXUS ARCHITECTURE v{config.settings.app_metadata.version} | MULTI-CLOUD GRAPH INTELLIGENCE FABRIC
+    CLOUDSCAPE NEXUS v5.0.1 | ENTERPRISE MULTI-CLOUD GRAPH DISCOVERY 
+    REGION: AP-SOUTH-1 (MUMBAI)
     ==================================================================================
     """
-    print(banner)
+    print("\033[96m" + banner + "\033[0m")
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(
-        description="Cloudscape Nexus v4.0 - Enterprise Cloud Graph Discovery Engine",
-        formatter_class=argparse.RawTextHelpFormatter
-    )
+def inject_mock_credentials():
+    """Forces environment variables for LocalStack compatibility if in MOCK mode."""
+    mode = os.getenv("NEXUS_EXECUTION_MODE", "MOCK").upper()
+    if mode == "MOCK":
+        logger.info("MOCK Mode Detected: Injecting dummy AWS credentials for ap-south-1...")
+        os.environ["AWS_ACCESS_KEY_ID"] = "testing"
+        os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
+        os.environ["AWS_DEFAULT_REGION"] = "ap-south-1"
+
+async def run_scan(force: bool = False):
+    """Executes the Global Cloudscape Scan with integrated Pre-Flight checks."""
+    from titan_preflight import TitanPreFlight
+    from core.orchestrator import CloudscapeOrchestrator
     
-    parser.add_argument(
-        "--scan", 
-        action="store_true", 
-        help="Initiates a full discovery and ingestion scan across all configured tenants."
-    )
+    logger.info("Initializing Cloudscape Pre-Flight Diagnostics...")
+    preflight = TitanPreFlight()
     
-    parser.add_argument(
-        "--debug", 
-        action="store_true", 
-        help="Overrides settings.yaml to enable verbose DEBUG logging for troubleshooting."
-    )
+    await preflight.check_dependencies()
+    await preflight.check_network_fabric()
+    await preflight.check_project_sentinels()
+    await preflight.check_cloud_mode()
     
-    parser.add_argument(
-        "--version", 
-        action="version", 
-        version=f"Cloudscape Nexus v{config.settings.app_metadata.version}"
-    )
+    is_ready = preflight.render_report()
+    
+    if not is_ready:
+        if force:
+            logger.warning("PRE-FLIGHT FAILED. Overriding abort sequence via --force flag. Proceed with extreme caution.")
+        else:
+            logger.critical("PRE-FLIGHT FAILED. Aborting Ignition. Use --force to bypass.")
+            sys.exit(1)
+            
+    logger.info("Pre-Flight sequence complete. Engaging Master Orchestrator.")
+    orchestrator = CloudscapeOrchestrator()
+    await orchestrator.execute_global_scan()
 
-    return parser.parse_args()
-
-# ==============================================================================
-# ASYNC MAIN ENTRY POINT
-# ==============================================================================
-async def execute_application(args: argparse.Namespace):
-    """
-    The asynchronous shell that instantiates the Orchestrator.
-    Wrapped in a massive try/catch to ensure the CLI always returns a standard 
-    POSIX exit code (0 for success, 1 for failure).
-    """
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        logger.debug("DEBUG logging forcefully enabled via CLI override.")
-
-    if not args.scan:
-        logger.info("No execution flag provided. Use --scan to begin discovery, or --help for options.")
-        return
-
-    orchestrator = None
+async def run_seed():
+    """Ignites the local Docker mesh with base infrastructure."""
     try:
-        orchestrator = CloudscapeOrchestrator()
-        await orchestrator.execute_global_scan()
+        from utils.mesh_seeder import MeshSeeder
+        seeder = MeshSeeder()
+        logger.info("Engaging Local Mesh Seeder for ap-south-1...")
         
-    except asyncio.CancelledError:
-        logger.warning("Application execution was manually cancelled via OS signal.")
+        if asyncio.iscoroutinefunction(seeder.execute):
+            await seeder.execute()
+        else:
+            await asyncio.to_thread(seeder.execute)
+            
+    except ImportError:
+        logger.error("Mesh Seeder module not found. Ensure utils/mesh_seeder.py exists.")
     except Exception as e:
-        logger.critical(f"A catastrophic failure occurred in the Application Core: {e}", exc_info=True)
-        sys.exit(1)
+        logger.error(f"Seeding failed: {e}")
 
-# ==============================================================================
-# SYNCHRONOUS BOOTSTRAPPER
-# ==============================================================================
-if __name__ == "__main__":
-    # 1. Catch OS Signals for Graceful Shutdown
-    signal.signal(signal.SIGINT, handle_sigint)
-    signal.signal(signal.SIGTERM, handle_sigint)
-
-    # 2. Parse CLI Args & Print UI
-    args = parse_arguments()
-    if len(sys.argv) > 1:
-        print_banner()
-
-    # 3. Apply High-Performance Event Loop
-    optimize_event_loop()
-
-    # 4. Ignite the Engine
+def run_ui():
+    """Spawns the Streamlit Aether Dashboard."""
+    ui_path = "ui/app.py" 
+    if not os.path.exists(ui_path):
+        logger.error(f"Cannot find UI module at {ui_path}. Ensure the ui/ directory exists.")
+        return
+        
     try:
-        asyncio.run(execute_application(args))
-        logger.info("Cloudscape CLI execution completed successfully. Exiting (0).")
-        sys.exit(0)
+        logger.info("Spawning Visualization Dashboard on port 8501...")
+        subprocess.run([sys.executable, "-m", "streamlit", "run", ui_path], check=True)
     except KeyboardInterrupt:
-        # Failsafe catch if signal handler doesn't trap it in time
-        print("\n[!] Force quit detected. Exiting.")
+        logger.info("Dashboard shutdown requested.")
+    except Exception as e:
+        logger.error(f"Failed to launch Dashboard: {e}")
+
+async def main():
+    parser = argparse.ArgumentParser(description="Cloudscape Nexus 5.0 - C2 Interface")
+    
+    # Action Flags
+    parser.add_argument("--scan", action="store_true", help="Execute Global Infrastructure Discovery & HAPD")
+    parser.add_argument("--seed", action="store_true", help="Seed LocalStack/Azurite with mock infrastructure")
+    parser.add_argument("--ui", action="store_true", help="Launch the Streamlit Visualization Dashboard")
+    parser.add_argument("--check", action="store_true", help="Run the Pre-Flight Diagnostic Suite only")
+    
+    # Modifier Flags
+    parser.add_argument("--force", action="store_true", help="Bypass Pre-Flight failures when using --scan")
+    
+    args = parser.parse_args()
+    print_cloudscape_banner()
+    
+    # Ensure credentials exist before any boto3 client initializes
+    inject_mock_credentials()
+
+    if args.check:
+        from titan_preflight import main as pf_main
+        await pf_main()
+    elif args.seed:
+        await run_seed()
+    elif args.scan:
+        await run_scan(force=args.force)
+    elif args.ui:
+        run_ui()
+    else:
+        parser.print_help()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n\033[91m[!] Execution aborted by user (CTRL+C). Shutting down gracefully...\033[0m")
+        sys.exit(0)
+    except Exception as e:
+        logger.critical(f"Unhandled system crash in Cloudscape Core: {e}")
         sys.exit(1)

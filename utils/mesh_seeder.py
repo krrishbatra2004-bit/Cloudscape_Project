@@ -1,210 +1,208 @@
-import os
-import json
 import logging
+import asyncio
+import json
+import time
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
-from azure.storage.blob import BlobServiceClient
-from concurrent.futures import ThreadPoolExecutor
 
-# ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 - ENTERPRISE MESH MEGA-SEEDER
-# ==============================================================================
-# Generates a highly complex, multi-tenant, multi-cloud infrastructure graph.
-# Seeds LocalStack (AWS) and Azurite (Azure) with realistic VPCs, IAM Trusts, 
-# S3 Data Lakes, RDS Clusters, and Azure Blob Storage tiers.
-# ==============================================================================
-
+# Azure SDK Imports
 try:
-    from rich.console import Console
-    from rich.theme import Theme
-    console = Console(theme=Theme({"info": "cyan", "success": "green", "warning": "yellow", "danger": "bold red"}))
+    from azure.storage.blob.aio import BlobServiceClient
+    from azure.core.exceptions import ResourceExistsError
 except ImportError:
-    class DummyConsole:
-        def print(self, msg, style=None): print(msg)
-    console = DummyConsole()
-
-# --- GLOBAL CONFIGURATION ---
-AWS_ENDPOINT = "http://127.0.0.1:4566"
-AWS_REGION = "us-east-1"
-DUMMY_CREDS = {"aws_access_key_id": "nexus-admin", "aws_secret_access_key": "nexus-secret"}
-
-AZURE_CONN_STR = (
-    "DefaultEndpointsProtocol=http;"
-    "AccountName=devstoreaccount1;"
-    "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
-    "BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
-)
-
-class AWSMeshSeeder:
-    def __init__(self):
-        self.ec2 = boto3.client('ec2', endpoint_url=AWS_ENDPOINT, region_name=AWS_REGION, **DUMMY_CREDS)
-        self.s3 = boto3.client('s3', endpoint_url=AWS_ENDPOINT, region_name=AWS_REGION, **DUMMY_CREDS)
-        self.iam = boto3.client('iam', endpoint_url=AWS_ENDPOINT, region_name=AWS_REGION, **DUMMY_CREDS)
-        self.rds = boto3.client('rds', endpoint_url=AWS_ENDPOINT, region_name=AWS_REGION, **DUMMY_CREDS)
-
-    def generate_vpc_topology(self, project_name: str, cidr: str) -> dict:
-        """Provisions a realistic network layer: VPC -> Subnets -> Security Groups"""
-        console.print(f"[{project_name}] Forging Network Fabric ({cidr})...", style="info")
-        try:
-            # 1. Create VPC
-            vpc = self.ec2.create_vpc(CidrBlock=cidr)
-            vpc_id = vpc['Vpc']['VpcId']
-            self.ec2.create_tags(Resources=[vpc_id], Tags=[{'Key': 'Name', 'Value': f'{project_name}-vpc'}, {'Key': 'Project', 'Value': project_name}])
-
-            # 2. Create Subnets (Public & Private)
-            pub_sub = self.ec2.create_subnet(VpcId=vpc_id, CidrBlock=cidr.replace("0.0/16", "1.0/24"))
-            priv_sub = self.ec2.create_subnet(VpcId=vpc_id, CidrBlock=cidr.replace("0.0/16", "2.0/24"))
-            
-            self.ec2.create_tags(Resources=[pub_sub['Subnet']['SubnetId']], Tags=[{'Key': 'Tier', 'Value': 'Public'}])
-            self.ec2.create_tags(Resources=[priv_sub['Subnet']['SubnetId']], Tags=[{'Key': 'Tier', 'Value': 'Private'}])
-
-            # 3. Create Security Group
-            sg = self.ec2.create_security_group(GroupName=f'{project_name}-sg-web', Description=f'Web traffic for {project_name}', VpcId=vpc_id)
-            sg_id = sg['GroupId']
-            
-            # Add Ingress rules (Simulating a vulnerability if project is WEB)
-            if "WEB" in project_name:
-                self.ec2.authorize_security_group_ingress(GroupId=sg_id, IpPermissions=[
-                    {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}, # Intentional High Risk
-                    {'IpProtocol': 'tcp', 'FromPort': 80, 'ToPort': 80, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
-                ])
-            
-            return {"vpc_id": vpc_id, "subnets": [pub_sub['Subnet']['SubnetId'], priv_sub['Subnet']['SubnetId']], "sg_id": sg_id}
-        except Exception as e:
-            console.print(f"[{project_name}] Network generation skipped: {e}", style="warning")
-            return {}
-
-    def generate_data_lakes(self):
-        """Provisions S3 buckets with complex multi-level tagging and access configurations"""
-        console.print("Forging S3 Data Lakes...", style="info")
-        buckets = [
-            {"name": "proj-fin-01-pci-vault-secure", "tags": {"DataClass": "PCI", "Environment": "Prod", "Risk": "Critical"}},
-            {"name": "proj-web-02-public-assets", "tags": {"DataClass": "Public", "Environment": "Prod", "Risk": "Low"}},
-            {"name": "proj-shr-03-central-logging", "tags": {"DataClass": "Internal", "Retention": "7Years"}},
-            {"name": "proj-dr-05-backup-unencrypted", "tags": {"DataClass": "Proprietary", "Vulnerability": "Unencrypted"}}
-        ]
-        
-        for b in buckets:
-            try:
-                self.s3.create_bucket(Bucket=b["name"])
-                self.s3.put_bucket_tagging(Bucket=b["name"], Tagging={'TagSet': [{'Key': k, 'Value': v} for k, v in b["tags"].items()]})
-                console.print(f"  + S3 Bucket Materialized: {b['name']}", style="success")
-            except Exception as e:
-                pass # Bucket likely exists
-
-    def generate_identity_fabric(self):
-        """Provisions complex IAM trusts and Cross-Cloud Shadow Admins"""
-        console.print("Forging IAM Identity Fabric (Shadow Admins)...", style="info")
-        
-        # 1. Standard Dev Role
-        try:
-            self.iam.create_role(
-                RoleName='PROJ-WEB-02-Developer-Role',
-                AssumeRolePolicyDocument='{"Version": "2012-10-17","Statement": [{"Effect": "Allow","Principal": {"Service": "ec2.amazonaws.com"},"Action": "sts:AssumeRole"}]}'
-            )
-            self.iam.attach_role_policy(RoleName='PROJ-WEB-02-Developer-Role', PolicyArn='arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess')
-        except ClientError: pass
-
-        # 2. The Cross-Cloud Vulnerability (Aether Detection Target)
-        try:
-            self.iam.create_role(
-                RoleName='Azure-Federated-Admin-Role',
-                AssumeRolePolicyDocument='{"Version": "2012-10-17","Statement": [{"Effect": "Allow","Principal": {"AWS": "*"},"Action": "sts:AssumeRole"}]}'
-            )
-            # Injecting the exact escalation path Aether is looking for
-            self.iam.put_role_policy(
-                RoleName='Azure-Federated-Admin-Role',
-                PolicyName='CrossCloudEscalationPolicy',
-                PolicyDocument='{"Version": "2012-10-17","Statement": [{"Effect": "Allow","Action": ["iam:PassRole", "ec2:RunInstances", "s3:*"],"Resource": "*"}]}'
-            )
-            console.print("  + [ATTACK PATH] Provisioned: Azure-Federated-Admin-Role", style="danger")
-        except ClientError: pass
-
-    def generate_databases(self):
-        """Provisions RDS configurations (simulated in LocalStack)"""
-        console.print("Forging RDS Database Clusters...", style="info")
-        try:
-            self.rds.create_db_instance(
-                DBInstanceIdentifier='proj-fin-01-transaction-db',
-                AllocatedStorage=20,
-                DBInstanceClass='db.t3.micro',
-                Engine='postgres',
-                MasterUsername='admin',
-                MasterUserPassword='supersecretpassword',
-                PubliclyAccessible=False,
-                StorageEncrypted=True,
-                Tags=[{'Key': 'Project', 'Value': 'FIN-01'}, {'Key': 'Contains', 'Value': 'PII'}]
-            )
-            
-            self.rds.create_db_instance(
-                DBInstanceIdentifier='proj-web-02-session-db',
-                AllocatedStorage=10,
-                DBInstanceClass='db.t3.micro',
-                Engine='mysql',
-                MasterUsername='admin',
-                MasterUserPassword='supersecretpassword',
-                PubliclyAccessible=True, # Vulnerability Target
-                StorageEncrypted=False,  # Vulnerability Target
-                Tags=[{'Key': 'Project', 'Value': 'WEB-02'}]
-            )
-            console.print("  + RDS Instances Materialized.", style="success")
-        except Exception as e:
-            pass
-
-class AzureMeshSeeder:
-    def __init__(self):
-        self.blob_client = BlobServiceClient.from_connection_string(AZURE_CONN_STR)
-
-    def generate_storage_hierarchy(self):
-        """Provisions Azure Blob Containers with rich metadata simulating Enterprise structures."""
-        console.print("Forging Azure Storage Fabric (Azurite)...", style="info")
-        
-        containers = [
-            {"name": "proj-azure-04-legal-holds", "meta": {"Department": "Legal", "RetentionPolicy": "Indefinite", "RiskTier": "Tier0"}},
-            {"name": "proj-azure-04-public-blobs", "meta": {"AccessTier": "Hot", "Exposure": "Public", "Data": "Marketing"}},
-            {"name": "proj-azure-04-vm-diagnostics", "meta": {"AutoDelete": "30Days", "System": "Core"}},
-            {"name": "cross-cloud-exchange-buffer", "meta": {"FederatedWith": "AWS", "Role": "Azure-Federated-Admin-Role"}} # The conceptual bridge
-        ]
-        
-        for c in containers:
-            try:
-                container_client = self.blob_client.get_container_client(c["name"])
-                if not container_client.exists():
-                    container_client.create_container(metadata=c["meta"])
-                    console.print(f"  + Blob Container Materialized: {c['name']}", style="success")
-            except Exception as e:
-                console.print(f"  - Failed Azure Container {c['name']}: {e}", style="warning")
+    BlobServiceClient = None
 
 # ==============================================================================
-# ORCHESTRATION
+# CLOUDSCAPE NEXUS 5.0 - TENANT-AWARE MESH SEEDER
+# ==============================================================================
+# Deep Hydration Engine. Provisions isolated network topologies and storage 
+# mechanisms per tenant. Applies mandatory 'CloudscapeTenantID' tags and metadata 
+# to bypass the Orchestrator's strict Cross-Contamination Gatekeeper.
 # ==============================================================================
 
-def execute_mega_seed():
-    console.print("\n" + "="*80, style="info")
-    console.print("    IGNITING NEXUS 5.0 AETHER MEGA-SEEDER", style="bold cyan")
-    console.print("="*80 + "\n", style="info")
+class MeshSeeder:
+    def __init__(self):
+        self.logger = logging.getLogger("Cloudscape.Utils.MeshSeeder")
+        
+        # ----------------------------------------------------------------------
+        # TARGET TENANT MATRIX
+        # ----------------------------------------------------------------------
+        self.tenants = [
+            "PROJ-FIN-01", 
+            "PROJ-WEB-02", 
+            "PROJ-SHR-03", 
+            "PROJ-AZURE-04", 
+            "PROJ-DR-05"
+        ]
+        
+        # ----------------------------------------------------------------------
+        # EXPLICIT AWS GATEWAY (Shadowing Bypass)
+        # ----------------------------------------------------------------------
+        self.aws_region = "ap-south-1"
+        self.aws_creds = {
+            "aws_access_key_id": "testing",
+            "aws_secret_access_key": "testing",
+            "region_name": self.aws_region,
+            "endpoint_url": "http://localhost:4566",
+            "config": Config(retries={'max_attempts': 1})
+        }
 
-    aws = AWSMeshSeeder()
-    azure = AzureMeshSeeder()
+        # ----------------------------------------------------------------------
+        # AZURE GATEWAY
+        # ----------------------------------------------------------------------
+        self.azure_conn_str = (
+            "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;"
+            "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
+            "BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
+        )
 
-    # 1. Build AWS Network Topologies
-    aws.generate_vpc_topology("PROJ-FIN-01", "10.1.0.0/16")
-    aws.generate_vpc_topology("PROJ-WEB-02", "10.2.0.0/16")
-    aws.generate_vpc_topology("PROJ-SHR-03", "10.3.0.0/16")
-    
-    # 2. Build AWS Compute & Data Layers
-    aws.generate_data_lakes()
-    aws.generate_databases()
-    aws.generate_identity_fabric()
+    async def execute(self):
+        """Master execution loop for Tenant-Aware deep hydration."""
+        self.logger.info(f"Initializing Tenant-Aware Mesh Hydration Sequence in {self.aws_region}...")
+        
+        tasks = [self._seed_aws_infrastructure()]
+        
+        if BlobServiceClient is not None:
+            tasks.append(self._seed_azure_infrastructure())
+        else:
+            self.logger.error("Azure SDK missing. Skipping Azurite hydration.")
 
-    # 3. Build Azure Storage Layer
-    azure.generate_storage_hierarchy()
+        await asyncio.gather(*tasks)
+        self.logger.info("======================================================")
+        self.logger.info(" Tenant Mesh Hydration Complete. Sensors may now be engaged.")
+        self.logger.info("======================================================")
 
-    console.print("\n" + "="*80, style="success")
-    console.print("    [✓] MULTI-CLOUD INFRASTRUCTURE SEEDING COMPLETE", style="bold green")
-    console.print("    The Matrix is Alive. Ready for Nexus Discovery.", style="green")
-    console.print("    Run: python main.py --scan", style="bold yellow")
-    console.print("="*80 + "\n", style="success")
+    # ==========================================================================
+    # AWS TENANT HYDRATION (LOCALSTACK)
+    # ==========================================================================
 
-if __name__ == "__main__":
-    execute_mega_seed()
+    async def _seed_aws_infrastructure(self):
+        """Asynchronous wrapper for the synchronous Boto3 SDK."""
+        self.logger.info("Engaging AWS LocalStack Tenant Hydration Protocol...")
+        try:
+            await asyncio.to_thread(self._provision_aws_core)
+        except Exception as e:
+            self.logger.error(f"AWS Tenant Seeding collapsed: {e}")
+
+    def _provision_aws_core(self):
+        """
+        Iterates through every tenant, calculating isolated CIDR blocks, 
+        provisioning infrastructure, and applying mandatory ownership tags.
+        """
+        ec2 = boto3.client('ec2', **self.aws_creds)
+        s3 = boto3.client('s3', **self.aws_creds)
+        iam = boto3.client('iam', **self.aws_creds)
+
+        for index, tenant_id in enumerate(self.tenants):
+            self.logger.info(f" -> Forging Isolated AWS Infrastructure for: {tenant_id}")
+            
+            # Standardized Tenant Tags
+            tenant_tags = [
+                {'Key': 'CloudscapeTenantID', 'Value': tenant_id},
+                {'Key': 'ManagedBy', 'Value': 'CloudscapeSeeder'}
+            ]
+
+            # 1. Identity Provisioning
+            role_name = f"Cloudscape-Federation-Role-{tenant_id}"
+            trust_policy = {
+                "Version": "2012-10-17",
+                "Statement": [{"Effect": "Allow", "Principal": {"Service": "ec2.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+            }
+            try:
+                iam.create_role(
+                    RoleName=role_name, 
+                    AssumeRolePolicyDocument=json.dumps(trust_policy),
+                    Tags=tenant_tags
+                )
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'EntityAlreadyExists':
+                    self.logger.error(f"IAM Error for {tenant_id}: {e}")
+
+            # 2. Network Topology (Isolated CIDR per Tenant to prevent overlap)
+            vpc_cidr = f"10.{index}.0.0/16"
+            sub_cidr = f"10.{index}.1.0/24"
+            
+            try:
+                # VPC
+                vpc = ec2.create_vpc(CidrBlock=vpc_cidr)
+                vpc_id = vpc['Vpc']['VpcId']
+                ec2.create_tags(Resources=[vpc_id], Tags=[{'Key': 'Name', 'Value': f'Core-VPC-{tenant_id}'}] + tenant_tags)
+                
+                # Subnet
+                subnet = ec2.create_subnet(VpcId=vpc_id, CidrBlock=sub_cidr)
+                sub_id = subnet['Subnet']['SubnetId']
+                ec2.create_tags(Resources=[sub_id], Tags=[{'Key': 'Name', 'Value': f'Public-Subnet-{tenant_id}'}] + tenant_tags)
+
+                # Security Group
+                sg = ec2.create_security_group(GroupName=f'web-sg-{tenant_id}', Description='Allow public inbound', VpcId=vpc_id)
+                sg_id = sg['GroupId']
+                ec2.create_tags(Resources=[sg_id], Tags=[{'Key': 'Name', 'Value': f'Web-SG-{tenant_id}'}] + tenant_tags)
+                
+                # 3. Compute Resources
+                ec2.run_instances(
+                    ImageId='ami-df5de72bdb3bfa507',
+                    InstanceType='t3.micro',
+                    MaxCount=1,
+                    MinCount=1,
+                    SubnetId=sub_id,
+                    SecurityGroupIds=[sg_id],
+                    TagSpecifications=[{
+                        'ResourceType': 'instance',
+                        'Tags': [{'Key': 'Name', 'Value': f'Worker-Node-{tenant_id}'}] + tenant_tags
+                    }]
+                )
+            except ClientError as e:
+                self.logger.debug(f"Network infrastructure for {tenant_id} already exists or failed: {e.response['Error']['Code']}")
+
+            # 4. Storage Resources
+            bucket_name = f"cloudscape-assets-{tenant_id.lower()}-v5"
+            try:
+                s3.create_bucket(Bucket=bucket_name, CreateBucketConfiguration={'LocationConstraint': self.aws_region})
+                # Apply Tenant Signature to Bucket
+                s3.put_bucket_tagging(Bucket=bucket_name, Tagging={'TagSet': tenant_tags})
+                
+                # Inject Physical Object with Metadata Signature
+                s3.put_object(
+                    Bucket=bucket_name, 
+                    Key='sensitive_payload.csv', 
+                    Body=b'record_id,secret\n1,REDACTED',
+                    Metadata={'cloudscapetenantid': tenant_id}
+                )
+            except ClientError as e:
+                if e.response['Error']['Code'] not in ['BucketAlreadyExists', 'BucketAlreadyOwnedByYou']:
+                    self.logger.error(f"S3 Error for {tenant_id}: {e}")
+
+    # ==========================================================================
+    # AZURE TENANT HYDRATION (AZURITE)
+    # ==========================================================================
+
+    async def _seed_azure_infrastructure(self):
+        """Provisions Blob Containers and injects files with Tenant Metadata."""
+        self.logger.info("Engaging Azure Azurite Tenant Hydration Protocol...")
+        
+        try:
+            blob_service_client = BlobServiceClient.from_connection_string(self.azure_conn_str)
+            async with blob_service_client:
+                for tenant_id in self.tenants:
+                    self.logger.info(f" -> Forging Azure Storage for: {tenant_id}")
+                    
+                    container_name = f"data-lake-{tenant_id.lower()}"
+                    tenant_metadata = {"cloudscapetenantid": tenant_id, "managedby": "cloudscapeseeder"}
+                    
+                    container_client = blob_service_client.get_container_client(container_name)
+                    try:
+                        await container_client.create_container(metadata=tenant_metadata)
+                    except ResourceExistsError:
+                        pass # Container exists, proceed to inject file
+                        
+                    # Inject physical blob with Tenant Signature to trigger AzureEngine
+                    blob_client = container_client.get_blob_client("infrastructure_state.tfstate")
+                    await blob_client.upload_blob(
+                        b'{"version": 4, "state": "active"}', 
+                        metadata=tenant_metadata, 
+                        overwrite=True
+                    )
+                    
+        except Exception as e:
+            self.logger.error(f"Azure Tenant Seeding collapsed: {e}")

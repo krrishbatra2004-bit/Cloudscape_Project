@@ -1,296 +1,400 @@
-import os
 import asyncio
 import logging
-import importlib
 import traceback
-import uuid
 from typing import Any, Dict, List
+
+# ==============================================================================
+# SPLIT-PLANE DEPENDENCY INJECTION
+# Isolates the Data Plane (Storage) from the Control Plane (ARM Management).
+# Prevents total engine failure in MOCK mode if ARM SDKs are corrupted.
+# ==============================================================================
+
+# 1. Data Plane SDKs (Required for MOCK / Azurite)
+try:
+    from azure.storage.blob.aio import BlobServiceClient
+    from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
+except ImportError:
+    BlobServiceClient = None
+
+# 2. Control Plane SDKs (Required for PROPER / ARM)
+try:
+    from azure.identity.aio import DefaultAzureCredential
+    from azure.mgmt.resource import ResourceManagementClient
+    from azure.mgmt.compute import ComputeManagementClient
+    from azure.mgmt.network import NetworkManagementClient
+    from azure.core.exceptions import ClientAuthenticationError
+except ImportError:
+    DefaultAzureCredential = None
+    ResourceManagementClient = ComputeManagementClient = NetworkManagementClient = None
 
 from engines.base_engine import BaseDiscoveryEngine
 from core.config import config, TenantConfig
 
 # ==============================================================================
-# AZURE ENTERPRISE DISCOVERY ENGINE (NEXUS 5.0 AETHER)
+# CLOUDSCAPE NEXUS 5.0 - ENTERPRISE AZURE DISCOVERY ENGINE
 # ==============================================================================
-# Environmentally Aware: Automatically splits logic between Real Azure ARM 
-# (Control Plane) and Local Azurite Mesh (Data Plane).
-# Implements 'Hybrid Overlays' to generate synthetic Management Plane assets
-# when running against a local Data Plane simulator.
+# Dual-Mode extraction engine. Natively routes to Azurite in MOCK mode or 
+# Global ARM endpoints in PROPER mode. Implements deterministic async consumption, 
+# Tenant Isolation Filtering, vulnerability heuristics, and state hashing.
 # ==============================================================================
 
 class AzureEngine(BaseDiscoveryEngine):
     def __init__(self, tenant: TenantConfig):
         super().__init__(tenant)
         self.logger = logging.getLogger(f"Cloudscape.Engines.Azure.[{self.tenant.id}]")
-        self.credential = self.get_azure_credential()
-        self.subscription_id = self.tenant.credentials.azure_subscription_id
         
-        # [AETHER SECURITY BYPASS]
-        if self.is_mocked:
-            self._disable_azure_tls_enforcement()
-            # Azurite uses a well-known master key for local data plane access
-            self.azurite_conn_str = (
-                f"DefaultEndpointsProtocol=http;"
-                f"AccountName=devstoreaccount1;"
-                f"AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
-                f"BlobEndpoint={self.mock_endpoint}/devstoreaccount1;"
-            )
+        # Fetch the abstracted connection parameters from the parent Gateway
+        self.conn_params = self.get_azure_connection_parameters()
+        self.is_mock = self.conn_params.get("is_mock", False)
+        self.credential = None
 
-    def _disable_azure_tls_enforcement(self):
-        """Neutralizes the Azure SDK's strict TLS enforcement for local testing."""
-        self.logger.debug(f"[{self.tenant.id}] Injecting Azure TLS Policy Bypass for Local Mesh...")
-        try:
-            from azure.core.pipeline.policies import BearerTokenCredentialPolicy
-            BearerTokenCredentialPolicy._enforce_https = lambda self, request: None
-            os.environ["AZURE_CORE_DISABLE_HTTPS_ENFORCEMENT"] = "True"
-        except ImportError:
-            pass
+    # --------------------------------------------------------------------------
+    # ISOLATION & GATEWAY MECHANISMS
+    # --------------------------------------------------------------------------
 
-    # ==========================================================================
-    # AUTHENTICATION & CONNECTIVITY (SPLIT BRAIN)
-    # ==========================================================================
+    async def _verify_tenant_ownership(self, resource_name: str, metadata: Dict[str, Any]) -> bool:
+        """
+        The Tenant Isolation Filter (Case-Insensitive).
+        Inspects resource metadata to ensure they belong to the current executing tenant.
+        Shields the graph from stale emulator state and cross-tenant contamination.
+        """
+        if not self.is_mock:
+            return True
+            
+        # 1. Check Metadata (Azure metadata dictionaries are usually flat string:string)
+        if metadata:
+            for k, v in metadata.items():
+                if str(k).lower() == 'cloudscapetenantid' and str(v).lower() == self.tenant.id.lower():
+                    return True
+                    
+        # 2. Last Resort Fallback (Name matching)
+        if self.tenant.id.lower() in resource_name.lower():
+            return True
+            
+        return False
 
     async def test_connection(self) -> bool:
-        """
-        Validates Azure connectivity. 
-        If Local: Tests Data Plane (Azurite Blob Service).
-        If Prod: Tests Control Plane (Azure Resource Manager).
-        """
-        self.logger.info("Testing Azure Authentication & Subscription Access...")
+        """Validates Authentication & Access using the dynamic Base Gateway routing."""
+        self.logger.info("Testing Azure Authentication & Access Gateway...")
+        
         try:
-            if self.is_mocked:
-                # LOCAL MESH: Test Azurite Data Plane
-                BlobServiceClient = getattr(importlib.import_module("azure.storage.blob"), "BlobServiceClient")
-                blob_client = BlobServiceClient.from_connection_string(self.azurite_conn_str)
+            if self.is_mock:
+                if BlobServiceClient is None:
+                    self.logger.error("Azure Storage SDK missing. Azurite mock extraction cannot proceed.")
+                    return False
+                    
+                self.logger.debug("MOCK Mode: Validating Azurite local endpoints.")
+                conn_str = self.conn_params.get("connection_string")
+                blob_service_client = BlobServiceClient.from_connection_string(conn_str)
                 
-                await self.execute_with_backoff(asyncio.to_thread, blob_client.get_service_properties)
-                self.logger.debug(f"[{self.tenant.id}] Azurite Local Mesh Auth Success.")
+                # Test connectivity by initiating an HTTP session to the gateway
+                async with blob_service_client:
+                    container_iter = blob_service_client.list_containers(results_per_page=1)
+                    await self.execute_with_backoff(container_iter.__anext__)
+                    
+                self.tenant.credentials.azure_subscription_id = "mock-azure-sub-0001"
+                self.logger.info("Azurite Gateway Handshake Verified.")
                 return True
+                
             else:
-                # PROD MESH: Test Azure Resource Manager
-                ResourceManagementClient = getattr(importlib.import_module("azure.mgmt.resource"), "ResourceManagementClient")
-                rm_client = ResourceManagementClient(credential=self.credential, subscription_id=self.subscription_id)
+                if DefaultAzureCredential is None:
+                    self.logger.error("Azure ARM SDKs missing. PROPER mode extraction cannot proceed.")
+                    return False
+                    
+                self.logger.debug("PROPER Mode: Validating Azure Resource Manager (ARM) via DefaultAzureCredential.")
+                self.credential = DefaultAzureCredential()
                 
-                await self.execute_with_backoff(asyncio.to_thread, lambda: list(rm_client.resource_groups.list()))
-                self.logger.debug(f"[{self.tenant.id}] Azure Auth Success for Subscription: {self.subscription_id}")
+                async with self.credential:
+                    token = await self.execute_with_backoff(self.credential.get_token, "https://management.azure.com/.default")
+                    if not token:
+                        return False
+                
+                if not self.tenant.credentials.azure_subscription_id:
+                    self.logger.info("No explicit Subscription ID provided. Resolving via ARM...")
+                    sub_client = ResourceManagementClient(credential=self.credential, subscription_id="00000000-0000-0000-0000-000000000000")
+                    subs = await asyncio.to_thread(list, sub_client.subscriptions.list())
+                    if subs:
+                        self.tenant.credentials.azure_subscription_id = subs[0].subscription_id
+                        self.logger.info(f"Target Azure Subscription Resolved: {self.tenant.credentials.azure_subscription_id}")
+                    else:
+                        self.logger.error("No Azure Subscriptions found for this identity.")
+                        return False
+
+                self.logger.info("ARM Gateway Handshake Verified.")
                 return True
                 
+        except StopAsyncIteration:
+            self.tenant.credentials.azure_subscription_id = "mock-azure-sub-0001"
+            self.logger.info("Azurite Gateway Handshake Verified (Empty Mesh).")
+            return True
+        except ClientAuthenticationError as auth_err:
+            self.logger.error(f"Azure ARM Authentication Failed: {auth_err}")
+            return False
         except Exception as e:
-            err_str = str(e).lower()
-            if "authentication failed" in err_str or "unauthorized" in err_str:
-                self.logger.error(f"Azure Authentication failed. Invalid Tenant/Client ID: {e}")
-            elif "connection refused" in err_str:
-                self.logger.error(f"Azurite container is unreachable. Is port 10000 open? {e}")
-            else:
-                self.logger.critical(f"Unexpected connection error during Azure init: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"Azure Connectivity Failed. Pipeline halted for this tenant: {e}")
             return False
 
-    # ==========================================================================
-    # SERVICE EXTRACTION PIPELINES (HYBRID OVERLAY ARCHITECTURE)
-    # ==========================================================================
+    # --------------------------------------------------------------------------
+    # CORE DISCOVERY ORCHESTRATION
+    # --------------------------------------------------------------------------
 
-    async def _extract_storage_accounts(self, baseline_risk: float) -> List[Dict]:
+    async def discover(self) -> List[Dict[str, Any]]:
         """
-        Extracts Storage assets. 
-        If Local: Extracts actual Live Azurite Blob Containers from the Docker mesh.
-        If Prod: Extracts Storage Accounts via ARM.
+        The Master Extraction Orchestrator.
+        Spawns parallel asynchronous threads to extract storage, compute, and 
+        network configurations based on the Execution Mode.
         """
-        payloads = []
-        try:
-            if self.is_mocked:
-                # LIVE MESH EXTRACTION: Pull actual Containers seeded in Azurite
-                BlobServiceClient = getattr(importlib.import_module("azure.storage.blob"), "BlobServiceClient")
-                blob_client = BlobServiceClient.from_connection_string(self.azurite_conn_str)
-                
-                containers = await self.execute_with_backoff(
-                    asyncio.to_thread, lambda: list(blob_client.list_containers(include_metadata=True))
-                )
-                
-                for container in containers:
-                    c_name = container.get("name")
-                    arn = f"/subscriptions/mock-sub/resourceGroups/local-rg/providers/Microsoft.Storage/storageAccounts/devstoreaccount1/blobServices/default/containers/{c_name}"
-                    
-                    # Package container metadata exactly like ARM properties
-                    raw_dict = {
-                        "name": c_name,
-                        "metadata": container.get("metadata", {}),
-                        "publicAccess": container.get("public_access", "None")
-                    }
-                    
-                    has_changed, current_hash = await self.check_state_differential(arn, raw_dict)
-                    if not has_changed: continue
-                        
-                    raw_dict["_state_hash"] = current_hash
-                    payloads.append(self.format_urm_payload("Microsoft.Storage", "blobContainers", arn, raw_dict, baseline_risk))
-            else:
-                # PROD ARM EXTRACTION
-                StorageManagementClient = getattr(importlib.import_module("azure.mgmt.storage"), "StorageManagementClient")
-                client = StorageManagementClient(self.credential, self.subscription_id)
-                
-                accounts = await self.execute_with_backoff(
-                    asyncio.to_thread, lambda: list(client.storage_accounts.list())
-                )
-                
-                for sa in accounts:
-                    sa_dict = sa.as_dict()
-                    arn = sa_dict.get("id", "unknown-azure-id")
-                    
-                    has_changed, current_hash = await self.check_state_differential(arn, sa_dict)
-                    if not has_changed: continue
-                        
-                    sa_dict["_state_hash"] = current_hash
-                    payloads.append(self.format_urm_payload("Microsoft.Storage", "storageAccounts", arn, sa_dict, baseline_risk))
-                    
-        except Exception as e:
-            self.logger.error(f"[{self.tenant.id}] Storage extraction failed: {e}")
-        return payloads
-
-    async def _extract_virtual_machines(self, baseline_risk: float) -> List[Dict]:
-        """Extracts VMs. Generates ARM-compliant Synthetic Overlays if running locally."""
-        payloads = []
-        try:
-            if self.is_mocked:
-                # SYNTHETIC OVERLAY: Simulate a VM backing the storage layer
-                vm_dict = {
-                    "id": f"/subscriptions/mock-sub/resourceGroups/local-rg/providers/Microsoft.Compute/virtualMachines/synth-vm-proxy",
-                    "name": "synth-vm-proxy",
-                    "location": "eastus",
-                    "properties": {
-                        "hardwareProfile": {"vmSize": "Standard_DS2_v2"},
-                        "networkProfile": {"networkInterfaces": [{"id": "nic-01"}]}
-                    },
-                    "tags": {"Environment": "LocalMesh", "Role": "Proxy"}
-                }
-                arn = vm_dict["id"]
-                has_changed, current_hash = await self.check_state_differential(arn, vm_dict)
-                if has_changed:
-                    vm_dict["_state_hash"] = current_hash
-                    payloads.append(self.format_urm_payload("Microsoft.Compute", "virtualMachines", arn, vm_dict, baseline_risk))
-            else:
-                ComputeManagementClient = getattr(importlib.import_module("azure.mgmt.compute"), "ComputeManagementClient")
-                client = ComputeManagementClient(self.credential, self.subscription_id)
-                vms = await self.execute_with_backoff(asyncio.to_thread, lambda: list(client.virtual_machines.list_all()))
-                
-                for vm in vms:
-                    vm_dict = vm.as_dict()
-                    arn = vm_dict.get("id", "unknown-azure-id")
-                    has_changed, current_hash = await self.check_state_differential(arn, vm_dict)
-                    if not has_changed: continue
-                    vm_dict["_state_hash"] = current_hash
-                    payloads.append(self.format_urm_payload("Microsoft.Compute", "virtualMachines", arn, vm_dict, baseline_risk))
-        except Exception as e:
-            self.logger.error(f"[{self.tenant.id}] Virtual Machine extraction failed: {e}")
-        return payloads
-
-    async def _extract_network_security_groups(self, baseline_risk: float) -> List[Dict]:
-        """Extracts NSGs. Generates ARM-compliant Synthetic Overlays if running locally."""
-        payloads = []
-        try:
-            if self.is_mocked:
-                # SYNTHETIC OVERLAY: Simulate a vulnerable NSG attached to the proxy VM
-                nsg_dict = {
-                    "id": f"/subscriptions/mock-sub/resourceGroups/local-rg/providers/Microsoft.Network/networkSecurityGroups/nsg-vulnerable-01",
-                    "name": "nsg-vulnerable-01",
-                    "location": "eastus",
-                    "properties": {
-                        "securityRules": [
-                            {"name": "AllowSSH", "properties": {"access": "Allow", "destinationPortRange": "22", "direction": "Inbound", "sourceAddressPrefix": "*"}}
-                        ]
-                    }
-                }
-                arn = nsg_dict["id"]
-                has_changed, current_hash = await self.check_state_differential(arn, nsg_dict)
-                if has_changed:
-                    nsg_dict["_state_hash"] = current_hash
-                    payloads.append(self.format_urm_payload("Microsoft.Network", "networkSecurityGroups", arn, nsg_dict, baseline_risk))
-            else:
-                NetworkManagementClient = getattr(importlib.import_module("azure.mgmt.network"), "NetworkManagementClient")
-                client = NetworkManagementClient(self.credential, self.subscription_id)
-                nsgs = await self.execute_with_backoff(asyncio.to_thread, lambda: list(client.network_security_groups.list_all()))
-                
-                for nsg in nsgs:
-                    nsg_dict = nsg.as_dict()
-                    arn = nsg_dict.get("id", "unknown-azure-id")
-                    has_changed, current_hash = await self.check_state_differential(arn, nsg_dict)
-                    if not has_changed: continue
-                    nsg_dict["_state_hash"] = current_hash
-                    payloads.append(self.format_urm_payload("Microsoft.Network", "networkSecurityGroups", arn, nsg_dict, baseline_risk))
-        except Exception as e:
-            self.logger.error(f"[{self.tenant.id}] NSG extraction failed: {e}")
-        return payloads
-
-    async def _extract_key_vaults(self, baseline_risk: float) -> List[Dict]:
-        """Extracts Key Vaults. Generates ARM-compliant Synthetic Overlays if running locally."""
-        payloads = []
-        try:
-            if self.is_mocked:
-                # SYNTHETIC OVERLAY: Simulate an overly permissive Key Vault
-                kv_dict = {
-                    "id": f"/subscriptions/mock-sub/resourceGroups/local-rg/providers/Microsoft.KeyVault/vaults/kv-open-access-01",
-                    "name": "kv-open-access-01",
-                    "properties": {
-                        "accessPolicies": [{"objectId": "00000000-0000-0000-0000-000000000000", "permissions": {"keys": ["get", "list"]}}]
-                    }
-                }
-                arn = kv_dict["id"]
-                has_changed, current_hash = await self.check_state_differential(arn, kv_dict)
-                if has_changed:
-                    kv_dict["_state_hash"] = current_hash
-                    payloads.append(self.format_urm_payload("Microsoft.KeyVault", "vaults", arn, kv_dict, baseline_risk))
-            else:
-                KeyVaultManagementClient = getattr(importlib.import_module("azure.mgmt.keyvault"), "KeyVaultManagementClient")
-                client = KeyVaultManagementClient(self.credential, self.subscription_id)
-                vaults = await self.execute_with_backoff(asyncio.to_thread, lambda: list(client.vaults.list_by_subscription()))
-                
-                for vault in vaults:
-                    vault_dict = vault.as_dict()
-                    arn = vault_dict.get("id", "unknown-azure-id")
-                    has_changed, current_hash = await self.check_state_differential(arn, vault_dict)
-                    if not has_changed: continue
-                    vault_dict["_state_hash"] = current_hash
-                    payloads.append(self.format_urm_payload("Microsoft.KeyVault", "vaults", arn, vault_dict, baseline_risk))
-        except Exception as e:
-            self.logger.error(f"[{self.tenant.id}] Key Vault extraction failed: {e}")
-        return payloads
-
-    # ==========================================================================
-    # MASTER EXECUTION PIPELINE
-    # ==========================================================================
-
-    async def run_full_discovery(self) -> List[Dict[str, Any]]:
-        """
-        The main ingestion pipeline. 
-        Executes isolated service extractions based on registry definitions.
-        If missing in local development, defaults to Deep Scan logic.
-        """
-        self.logger.info(f"[{self.tenant.id}] Initiating Full Azure Telemetry Extraction...")
+        self.logger.info(f"[{self.tenant.id}] Initiating Azure Telemetry Extraction...")
         total_payloads = []
         
-        azure_registry = config.service_registry.get("azure", {})
-        
-        tasks = []
+        # The Registry Force-Load
+        reg = getattr(config, 'service_registry', {}).get("azure", {})
+        if not reg:
+            self.logger.debug(f"[{self.tenant.id}] Registry empty. Forcing Titan extraction defaults.")
+            reg = {
+                "storage_container": {"baseline_risk_score": 0.3},
+                "storage_blob": {"baseline_risk_score": 0.5},
+                "virtual_machine": {"baseline_risk_score": 0.6},
+                "virtual_network": {"baseline_risk_score": 0.1},
+                "network_security_group": {"baseline_risk_score": 0.2}
+            }
 
-        # --- DATA PLANE (Storage) ---
-        risk = azure_registry.get("storage_account", {}).get("baseline_risk_score", 0.4)
-        tasks.append(self._extract_storage_accounts(risk))
+        tasks = []
+        
+        if self.is_mock:
+            self.logger.debug("MOCK Mode active: Engaging Local Azurite deep extraction sequence.")
+            if "storage_container" in reg and BlobServiceClient is not None:
+                tasks.append(self._extract_azurite_storage(
+                    container_risk=reg["storage_container"].get("baseline_risk_score", 0.3),
+                    blob_risk=reg["storage_blob"].get("baseline_risk_score", 0.5)
+                ))
+        else:
+            self.logger.debug("PROPER Mode active: Engaging Global ARM telemetry extraction.")
+            sub_id = self.tenant.credentials.azure_subscription_id
             
-        # --- MANAGEMENT PLANE (Compute/Network/Security) ---
-        risk = azure_registry.get("virtual_machine", {}).get("baseline_risk_score", 0.5)
-        tasks.append(self._extract_virtual_machines(risk))
-            
-        risk = azure_registry.get("network_security_group", {}).get("baseline_risk_score", 0.2)
-        tasks.append(self._extract_network_security_groups(risk))
-            
-        risk = azure_registry.get("key_vault", {}).get("baseline_risk_score", 0.9)
-        tasks.append(self._extract_key_vaults(risk))
+            if DefaultAzureCredential is not None:
+                if "virtual_machine" in reg:
+                    tasks.append(self._extract_virtual_machines(sub_id, reg["virtual_machine"].get("baseline_risk_score", 0.6)))
+                if "virtual_network" in reg:
+                    tasks.append(self._extract_virtual_networks(sub_id, reg["virtual_network"].get("baseline_risk_score", 0.1)))
+                if "network_security_group" in reg:
+                    tasks.append(self._extract_network_security_groups(sub_id, reg["network_security_group"].get("baseline_risk_score", 0.2)))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for result in results:
             if isinstance(result, Exception):
-                self.logger.error(f"[{self.tenant.id}] A service extraction task crashed: {result}")
-            elif isinstance(result, list):
+                self.logger.error(f"A core Azure extraction task failed catastrophically: {result}")
+                self.logger.debug(traceback.format_exc())
+            elif result:
                 total_payloads.extend(result)
 
-        self.logger.info(f"[{self.tenant.id}] Discovery Complete. {len(total_payloads)} fresh nodes acquired.")
+        self.logger.info(f"[{self.tenant.id}] Azure Discovery Cycle Complete. Extracted {len(total_payloads)} nodes.")
         return total_payloads
+
+    # ==========================================================================
+    # AZURITE DEEP EXTRACTION (PATH A)
+    # ==========================================================================
+
+    async def _extract_azurite_storage(self, container_risk: float, blob_risk: float) -> List[Dict]:
+        """
+        Recursively traverses Azurite to extract Storage Containers and physical Blobs.
+        Implements Deterministic Async Consumption to prevent silent iterator exhaustion.
+        """
+        payloads = []
+        conn_str = self.conn_params.get("connection_string")
+        sub_id = self.tenant.credentials.azure_subscription_id or "unknown"
+        
+        try:
+            blob_service_client = BlobServiceClient.from_connection_string(conn_str)
+            
+            async with blob_service_client:
+                # 1. Deterministic Extraction of Containers
+                container_iter = blob_service_client.list_containers(include_metadata=True)
+                containers = []
+                async for c in container_iter:
+                    containers.append(c)
+                
+                for container in containers:
+                    c_name = container.name
+                    c_metadata = container.metadata or {}
+                    
+                    is_owner = await self._verify_tenant_ownership(c_name, c_metadata)
+                    if not is_owner:
+                        continue
+                        
+                    c_arn = f"/subscriptions/{sub_id}/resourceGroups/mock-rg/providers/Microsoft.Storage/storageAccounts/devstoreaccount1/blobServices/default/containers/{c_name}"
+                    
+                    # Container Vulnerability Heuristics
+                    c_risk = container_risk
+                    c_tags = []
+                    if container.public_access:
+                        c_tags.append({"Key": "Exposure", "Value": f"Public-{container.public_access}"})
+                        c_risk += 0.3
+                        
+                    c_data = {"Name": c_name, "Tags": c_tags, "Metadata": c_metadata}
+                    has_changed, state_hash = await self.check_state_differential(c_arn, c_data)
+                    
+                    if has_changed:
+                        c_data["_state_hash"] = state_hash
+                        payload = self.format_urm_payload("storage", "StorageContainer", c_arn, c_data, c_risk)
+                        payload["cloud_provider"] = "azure"
+                        payloads.append(payload)
+                        
+                    # 2. Deterministic Extraction of Blobs within the Container
+                    container_client = blob_service_client.get_container_client(c_name)
+                    blob_iter = container_client.list_blobs(include=['metadata'])
+                    blobs = []
+                    async for b in blob_iter:
+                        blobs.append(b)
+                    
+                    for blob in blobs:
+                        b_name = blob.name
+                        b_arn = f"{c_arn}/blobs/{b_name}"
+                        b_metadata = blob.metadata or {}
+                        
+                        b_tags = []
+                        b_risk = blob_risk
+                        
+                        # Blob Payload Heuristics
+                        if "pci" in b_name.lower() or "billing" in b_name.lower():
+                            b_tags.append({"Key": "DataClassification", "Value": "Restricted"})
+                            b_risk += 0.4
+                        if "tfstate" in b_name.lower():
+                            b_tags.append({"Key": "Infrastructure", "Value": "StateFile"})
+                            b_risk += 0.4
+                            
+                        b_data = {
+                            "Name": b_name, 
+                            "Tags": b_tags, 
+                            "Metadata": b_metadata,
+                            "Size": blob.size,
+                            "ContentType": blob.content_settings.content_type if blob.content_settings else "unknown"
+                        }
+                        
+                        b_has_changed, b_state_hash = await self.check_state_differential(b_arn, b_data)
+                        if b_has_changed:
+                            b_data["_state_hash"] = b_state_hash
+                            b_payload = self.format_urm_payload("storage", "StorageBlob", b_arn, b_data, min(b_risk, 1.0))
+                            b_payload["cloud_provider"] = "azure"
+                            payloads.append(b_payload)
+
+            return payloads
+            
+        except Exception as e:
+            self.logger.error(f"Azure Azurite Storage extraction failed: {e}")
+            self.logger.debug(traceback.format_exc())
+            return []
+
+    # ==========================================================================
+    # GLOBAL ARM DEEP EXTRACTION (PATH B)
+    # ==========================================================================
+
+    async def _extract_virtual_machines(self, subscription_id: str, risk: float) -> List[Dict]:
+        """Extracts Azure Virtual Machines via ARM compute client."""
+        payloads = []
+        try:
+            client = ComputeManagementClient(credential=self.credential, subscription_id=subscription_id)
+            
+            def fetch_vms():
+                return list(client.virtual_machines.list_all())
+                
+            vms = await self.execute_with_backoff(asyncio.to_thread, fetch_vms)
+            
+            for vm in vms:
+                arn = vm.id
+                vm_dict = vm.as_dict()
+                
+                vm_risk = risk
+                if not vm_dict.get('network_profile', {}).get('network_interfaces'):
+                    vm_dict.setdefault("tags", {})["NetworkState"] = "Orphaned"
+                
+                has_changed, state_hash = await self.check_state_differential(arn, vm_dict)
+                if has_changed:
+                    vm_dict["_state_hash"] = state_hash
+                    payload = self.format_urm_payload("compute", "VirtualMachine", arn, vm_dict, min(vm_risk, 1.0))
+                    payload["cloud_provider"] = "azure"
+                    payloads.append(payload)
+                    
+            return payloads
+        except Exception as e:
+            self.logger.error(f"ARM Virtual Machine extraction failed: {e}")
+            return []
+
+    async def _extract_virtual_networks(self, subscription_id: str, risk: float) -> List[Dict]:
+        """Extracts Azure VNets and Subnets via ARM network client."""
+        payloads = []
+        try:
+            client = NetworkManagementClient(credential=self.credential, subscription_id=subscription_id)
+            
+            def fetch_vnets():
+                return list(client.virtual_networks.list_all())
+                
+            vnets = await self.execute_with_backoff(asyncio.to_thread, fetch_vnets)
+            
+            for vnet in vnets:
+                arn = vnet.id
+                vnet_dict = vnet.as_dict()
+                
+                has_changed, state_hash = await self.check_state_differential(arn, vnet_dict)
+                if has_changed:
+                    vnet_dict["_state_hash"] = state_hash
+                    payload = self.format_urm_payload("network", "VirtualNetwork", arn, vnet_dict, risk)
+                    payload["cloud_provider"] = "azure"
+                    payloads.append(payload)
+                    
+                for subnet in vnet_dict.get('subnets', []):
+                    sub_arn = subnet.get('id')
+                    sub_risk = risk
+                    
+                    if not subnet.get('network_security_group'):
+                        subnet.setdefault("tags", {})["Security"] = "Unprotected"
+                        sub_risk += 0.3
+                        
+                    s_has_changed, s_state_hash = await self.check_state_differential(sub_arn, subnet)
+                    if s_has_changed:
+                        subnet["_state_hash"] = s_state_hash
+                        s_payload = self.format_urm_payload("network", "Subnet", sub_arn, subnet, min(sub_risk, 1.0))
+                        s_payload["cloud_provider"] = "azure"
+                        payloads.append(s_payload)
+                        
+            return payloads
+        except Exception as e:
+            self.logger.error(f"ARM Virtual Network extraction failed: {e}")
+            return []
+
+    async def _extract_network_security_groups(self, subscription_id: str, risk: float) -> List[Dict]:
+        """Extracts Azure NSGs and evaluates inbound rule risk."""
+        payloads = []
+        try:
+            client = NetworkManagementClient(credential=self.credential, subscription_id=subscription_id)
+            
+            def fetch_nsgs():
+                return list(client.network_security_groups.list_all())
+                
+            nsgs = await self.execute_with_backoff(asyncio.to_thread, fetch_nsgs)
+            
+            for nsg in nsgs:
+                arn = nsg.id
+                nsg_dict = nsg.as_dict()
+                nsg_risk = risk
+                
+                for rule in nsg_dict.get('security_rules', []):
+                    if rule.get('direction') == 'Inbound' and rule.get('access') == 'Allow':
+                        port = rule.get('destination_port_range')
+                        if port in ['22', '3389', 'Any', '*']:
+                            nsg_dict.setdefault("tags", {})["Exposure"] = "CriticalPortOpen"
+                            nsg_risk += 0.5
+                            break
+                            
+                has_changed, state_hash = await self.check_state_differential(arn, nsg_dict)
+                if has_changed:
+                    nsg_dict["_state_hash"] = state_hash
+                    payload = self.format_urm_payload("network", "NetworkSecurityGroup", arn, nsg_dict, min(nsg_risk, 1.0))
+                    payload["cloud_provider"] = "azure"
+                    payloads.append(payload)
+                    
+            return payloads
+        except Exception as e:
+            self.logger.error(f"ARM NSG extraction failed: {e}")
+            return []

@@ -1,297 +1,279 @@
-import abc
-import time
-import json
-import hashlib
 import asyncio
+import hashlib
+import json
 import logging
+import os
+import time
 import traceback
-from typing import Any, Callable, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Tuple, Optional
 
-# Optional Redis import for the State Differential Engine
+# Cloud Provider Exceptions for Circuit Breaker
 try:
-    import redis.asyncio as aioredis
-    from redis.exceptions import RedisError
-    REDIS_AVAILABLE = True
+    from botocore.exceptions import ClientError, BotoCoreError, EndpointConnectionError
 except ImportError:
-    REDIS_AVAILABLE = False
+    ClientError = BotoCoreError = EndpointConnectionError = Exception
 
-from core.config import config, TenantConfig
+try:
+    from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
+except ImportError:
+    HttpResponseError = ResourceNotFoundError = Exception
 
-# ==============================================================================
-# ENTERPRISE ASYNC RATE LIMITER (TOKEN BUCKET ALGORITHM)
-# Prevents aggressive multi-threading from triggering Cloud Provider API blocks.
-# ==============================================================================
-class AsyncTokenBucket:
-    """
-    Highly precise asynchronous rate limiter.
-    Ensures that across hundreds of threads, we never exceed the 
-    rate_limit_calls_per_sec defined in settings.yaml.
-    """
-    def __init__(self, rate_limit_hz: float):
-        self.capacity = float(rate_limit_hz)
-        self.tokens = float(rate_limit_hz)
-        self.rate = float(rate_limit_hz)
-        self.last_update = time.monotonic()
-        self.lock = asyncio.Lock()
-
-    async def acquire(self, tokens: int = 1) -> None:
-        while True:
-            async with self.lock:
-                now = time.monotonic()
-                time_passed = now - self.last_update
-                self.tokens = min(self.capacity, self.tokens + time_passed * self.rate)
-                self.last_update = now
-
-                if self.tokens >= tokens:
-                    self.tokens -= tokens
-                    return
-                
-                # Calculate exact time needed to wait for the required tokens
-                wait_time = (tokens - self.tokens) / self.rate
-            
-            # Yield control back to the event loop while waiting
-            await asyncio.sleep(wait_time)
-
+from core.config import TenantConfig
 
 # ==============================================================================
-# MOCK CREDENTIAL INJECTOR (NEXUS 5.0 AETHER)
+# CLOUDSCAPE NEXUS 5.0 - BASE DISCOVERY ENGINE
 # ==============================================================================
-class MockAzureCredential:
-    """
-    Bypasses Microsoft Entra ID (login.microsoftonline.com) entirely.
-    Injects a mathematically valid, unexpiring dummy token for Azurite testing.
-    """
-    def get_token(self, *scopes: str, **kwargs: Any) -> Any:
-        from azure.core.credentials import AccessToken
-        return AccessToken("mock-aether-token-1122334455", int(time.time()) + 3600)
-
-
+# The Enterprise Abstract Gateway.
+# Manages execution modes (MOCK vs PROPER), dynamic endpoint routing, resilient 
+# network backoffs, concurrency limiting, URM normalization, and differential 
+# state hashing for high-performance convergence.
 # ==============================================================================
-# ABSTRACT BASE ENGINE
-# ==============================================================================
-class BaseDiscoveryEngine(abc.ABC):
-    """
-    The Universal Interface for all Cloud/SaaS Discovery Engines.
-    Implements fault-tolerant API execution, state hashing, and schema normalization.
-    """
 
+class BaseDiscoveryEngine:
     def __init__(self, tenant: TenantConfig):
+        """
+        Initializes the Core Discovery primitives, setting up logging, metrics,
+        and the environment-aware execution mode.
+        """
         self.tenant = tenant
-        self.provider = tenant.provider.upper()
-        self.logger = logging.getLogger(f"Cloudscape.Engine.{self.provider}.[{tenant.id}]")
+        self.logger = logging.getLogger(f"Cloudscape.Engines.Base.[{self.tenant.id}]")
         
         # ----------------------------------------------------------------------
-        # 1. PYDANTIC CONFIGURATION BINDING
+        # MODE ROUTER: Path A (MOCK) vs Path B (PROPER)
         # ----------------------------------------------------------------------
-        try:
-            crawl_cfg = config.settings.crawling
-            self.max_retries = crawl_cfg.api_retry_max_attempts
-            self.backoff_factor = crawl_cfg.api_retry_backoff_factor
-            self.fail_open = crawl_cfg.fail_open_on_access_denied
-            limit_hz = crawl_cfg.rate_limit_calls_per_sec
-            self.verify_ssl = crawl_cfg.verify_ssl
-            
-            self.use_state_cache = config.settings.orchestrator.enable_state_differential
-        except AttributeError as e:
-            self.logger.critical(f"FATAL: Engine failed to bind to Pydantic configuration: {e}")
-            raise
+        self.mode = os.getenv("NEXUS_EXECUTION_MODE", "MOCK").upper()
         
         # ----------------------------------------------------------------------
-        # 2. CONCURRENCY & RATE LIMITING
+        # RESILIENCE & CONCURRENCY TUNING
         # ----------------------------------------------------------------------
-        self.rate_limiter = AsyncTokenBucket(limit_hz)
+        self.max_retries = 4
+        self.base_delay = 1.5
+        # Prevent socket exhaustion during massive parallel sweeps
+        self.max_concurrent_tasks = 50 
+        self._semaphore = asyncio.Semaphore(self.max_concurrent_tasks)
         
         # ----------------------------------------------------------------------
-        # 3. LOCAL MESH INTERCEPTION (LOCALSTACK / AZURITE)
+        # FORENSIC METRICS MATRIX
         # ----------------------------------------------------------------------
-        self.is_mocked = "endpoint_url" in self.tenant.tags
-        self.mock_endpoint = self.tenant.tags.get("endpoint_url")
-        
-        if self.is_mocked:
-            self.verify_ssl = False  # Disable SSL for localhost Docker traffic
-            self.logger.debug(f"[{self.tenant.id}] Local Mesh Interception Active -> {self.mock_endpoint}")
-
-        # ----------------------------------------------------------------------
-        # 4. REDIS STATE DIFFERENTIAL ENGINE
-        # ----------------------------------------------------------------------
-        self.redis_client = None
-        if self.use_state_cache:
-            self._bootstrap_redis()
-
-        self.logger.debug(f"[{self.tenant.id}] Engine Initialized. Rate Limit: {limit_hz}/sec. Cache Enabled: {self.use_state_cache}")
-
-    def _bootstrap_redis(self) -> None:
-        """Initializes the async Redis connection for the State Cache."""
-        if not REDIS_AVAILABLE:
-            self.logger.warning("Redis package not installed. State Differential Engine disabled.")
-            self.use_state_cache = False
-            return
-            
-        try:
-            # Safely attempt to fetch Redis URI, fallback to standard localhost if not explicitly in config
-            redis_uri = getattr(config.settings, "state_cache", None)
-            redis_uri = redis_uri.uri if redis_uri else "redis://localhost:6379"
-
-            self.redis_client = aioredis.from_url(
-                redis_uri, 
-                encoding="utf-8", 
-                decode_responses=True
-            )
-        except Exception as e:
-            self.logger.error(f"Failed to connect to State Cache (Redis): {e}. Falling back to full ingest.")
-            self.use_state_cache = False
-
-    # ==========================================================================
-    # CONNECTION FACTORIES (THE AUTH FIX)
-    # ==========================================================================
-
-    def get_aws_client_kwargs(self, region_override: Optional[str] = None) -> Dict[str, Any]:
-        """Dynamically constructs Boto3 arguments, hijacking credentials if mocked."""
-        creds = self.tenant.credentials
-        region = region_override or creds.aws_default_region
-
-        kwargs = {
-            "region_name": region,
-            "verify": self.verify_ssl
+        self.metrics = {
+            "api_calls_attempted": 0,
+            "api_calls_successful": 0,
+            "circuit_breaker_triggers": 0,
+            "state_hashes_calculated": 0,
+            "state_hashes_unchanged": 0,
+            "nodes_formatted": 0,
+            "execution_time_ms": 0.0
         }
+        
+        self._log_initialization_state()
 
-        if self.is_mocked:
-            kwargs["endpoint_url"] = self.mock_endpoint
-            kwargs["aws_access_key_id"] = "test"
-            kwargs["aws_secret_access_key"] = "test"
+    def _log_initialization_state(self):
+        """Outputs the operational parameters to the forensic log."""
+        if self.mode == "MOCK":
+            self.logger.info("Engine initialized in MOCK Mode. Traffic routed to Local Sandbox Gateways.")
         else:
-            kwargs["aws_access_key_id"] = creds.aws_access_key_id
-            kwargs["aws_secret_access_key"] = creds.aws_secret_access_key
+            self.logger.info("Engine initialized in PROPER Mode. Traffic routed to Global Cloud APIs.")
+        self.logger.debug(f"Concurrency capped at {self.max_concurrent_tasks} parallel threads.")
 
+    # ==========================================================================
+    # DYNAMIC CONNECTION GATEWAYS (THE "HOT SWAP" ROUTERS)
+    # ==========================================================================
+
+    def get_aws_client_kwargs(self) -> Dict[str, Any]:
+        """
+        The Universal AWS Connection Gateway.
+        Dynamically steers SDK traffic based on the execution mode.
+        Child classes (AWSEngine) must pass this dictionary to boto3 client initializations.
+        """
+        kwargs = {}
+        if self.mode == "MOCK":
+            # Path A: Force traffic to the LocalStack Docker mesh
+            kwargs["endpoint_url"] = "http://localhost:4566"
+            # CRITICAL FIX: Prevent Identity Shadowing by forcing the testing partition
+            kwargs["aws_access_key_id"] = "testing"
+            kwargs["aws_secret_access_key"] = "testing"
+            
+        # Path B (PROPER): Returns empty dict. 
+        # boto3 will automatically use standard AWS endpoints and rely on IAM.
         return kwargs
 
-    def get_azure_credential(self) -> Any:
-        """Yields Azure Auth. Uses MockAzureCredential to prevent Entra ID crashes."""
-        if self.is_mocked:
-            return MockAzureCredential()
+    def get_azure_connection_parameters(self) -> Dict[str, Any]:
+        """
+        The Universal Azure Connection Gateway.
+        Provides connectivity logic for Azurite (MOCK) or ARM/Graph APIs (PROPER).
+        """
+        if self.mode == "MOCK":
+            # Path A: Explicitly target the Azurite container
+            return {
+                "connection_string": (
+                    "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;"
+                    "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
+                    "BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
+                ),
+                "is_mock": True
+            }
+        else:
+            # Path B (PROPER): Signal engine to use DefaultAzureCredential
+            return {
+                "is_mock": False
+            }
+
+    # ==========================================================================
+    # NETWORK RESILIENCE (CIRCUIT BREAKER & SEMAPHORES)
+    # ==========================================================================
+
+    async def execute_with_backoff(self, func: Callable, *args, **kwargs) -> Any:
+        """
+        Adaptive Jitter Backoff Algorithm wrapped in a Concurrency Semaphore.
+        Shields the extraction pipeline from rate limits (429s) and transient faults.
+        """
+        async with self._semaphore:
+            self.metrics["api_calls_attempted"] += 1
+            retries = 0
             
-        from azure.identity import ClientSecretCredential
-        creds = self.tenant.credentials
-        return ClientSecretCredential(
-            tenant_id=creds.azure_tenant_id,
-            client_id=creds.azure_client_id,
-            client_secret=creds.azure_client_secret
-        )
+            while retries <= self.max_retries:
+                try:
+                    start_time = time.perf_counter()
+                    result = await func(*args, **kwargs)
+                    self.metrics["execution_time_ms"] += (time.perf_counter() - start_time) * 1000
+                    self.metrics["api_calls_successful"] += 1
+                    return result
+                    
+                except (ClientError, BotoCoreError, EndpointConnectionError) as e:
+                    # AWS Exception Handling
+                    error_code = getattr(e, 'response', {}).get('Error', {}).get('Code', 'Unknown')
+                    
+                    if error_code in ['AccessDenied', 'UnauthorizedOperation', 'InvalidClientTokenId', 'AuthFailure']:
+                        self.logger.error(f"Circuit Breaker Triggered: Hard Authorization Failure ({error_code}).")
+                        raise
+                        
+                    self._handle_retry_logic(retries, error_code, func.__name__)
+                    retries += 1
+                    
+                except (HttpResponseError, ResourceNotFoundError) as e:
+                    # Azure Exception Handling
+                    error_code = getattr(e, 'error', {}).get('code', 'Unknown') if hasattr(e, 'error') else 'HttpError'
+                    
+                    if e.status_code in [401, 403]:
+                        self.logger.error(f"Circuit Breaker Triggered: Azure Authorization Failure ({error_code}).")
+                        raise
+                        
+                    self._handle_retry_logic(retries, error_code, func.__name__)
+                    retries += 1
+                    
+                except Exception as e:
+                    # Catch-all for SDK bugs, payload parsing faults, or memory issues
+                    self.logger.error(f"Unhandled catastrophic exception in execution matrix: {e}")
+                    self.logger.debug(traceback.format_exc())
+                    raise
+
+    async def _handle_retry_logic(self, current_retry: int, error_code: str, func_name: str):
+        """Internal backoff calculator using exponential jitter."""
+        self.metrics["circuit_breaker_triggers"] += 1
+        if current_retry >= self.max_retries:
+            self.logger.error(f"Maximum backoff reached ({self.max_retries}). Function {func_name} failed. Code: {error_code}")
+            raise Exception(f"Max retries exceeded for {func_name}")
+            
+        sleep_time = (self.base_delay ** current_retry) * 0.5
+        self.logger.warning(f"Transient fault detected ({error_code}). Retrying {func_name} in {sleep_time:.2f}s (Attempt {current_retry + 1}/{self.max_retries})")
+        await asyncio.sleep(sleep_time)
 
     # ==========================================================================
-    # EXECUTION PIPELINE & STATE LOGIC
+    # URM STANDARDIZATION & STATE MANAGEMENT
     # ==========================================================================
 
-    async def execute_with_backoff(self, api_func: Callable, *args, **kwargs) -> Any:
+    def format_urm_payload(self, service: str, resource_type: str, arn: str, raw_data: Dict[str, Any], baseline_risk: float) -> Dict[str, Any]:
         """
-        The Core Resilience Wrapper.
-        Executes an API call using the Token Bucket rate limiter, catches provider
-        throttling (429s) or server errors (500s), and applies exponential backoff.
+        Transforms raw, vendor-specific JSON into the Universal Resource Model (URM)
+        required by the Cloudscape Hybrid Bridge and Identity Fabric.
+        Flattens tags and extracts deeply nested names safely.
         """
-        attempt = 0
-        while attempt < self.max_retries:
-            try:
-                # 1. Respect the Global Rate Limit before making the call
-                await self.rate_limiter.acquire()
-                
-                # 2. Execute the function
-                result = await api_func(*args, **kwargs)
-                return result
-
-            except Exception as e:
-                attempt += 1
-                error_msg = str(e).lower()
-                
-                # Detect Access Denied (403 / AuthorizationFailed)
-                if "accessdenied" in error_msg or "authorizationfailed" in error_msg or "403" in error_msg:
-                    if self.fail_open:
-                        self.logger.warning(f"[{self.tenant.id}] Permission Denied calling {api_func.__name__}. Skipping resource.")
-                        return None
-                    else:
-                        self.logger.error(f"[{self.tenant.id}] FATAL: Access Denied calling {api_func.__name__}.")
-                        raise e
-
-                # Detect Throttling (429) or Server Errors (500/503)
-                if "throttling" in error_msg or "toomanyrequests" in error_msg or "50" in error_msg:
-                    sleep_time = (self.backoff_factor ** attempt)
-                    self.logger.warning(f"[{self.tenant.id}] API Throttled/Error on {api_func.__name__}. Retrying in {sleep_time:.2f}s (Attempt {attempt}/{self.max_retries})")
-                    await asyncio.sleep(sleep_time)
-                    continue
-                
-                # Unhandled Exceptions
-                self.logger.error(f"[{self.tenant.id}] Unexpected failure in {api_func.__name__}: {error_msg}\n{traceback.format_exc()}")
-                raise e
+        self.metrics["nodes_formatted"] += 1
         
-        # Exhausted Retries
-        self.logger.error(f"[{self.tenant.id}] API Exhausted all {self.max_retries} retries for {api_func.__name__}.")
-        raise TimeoutError(f"Max retries exceeded for {api_func.__name__}")
-
-    async def check_state_differential(self, resource_arn: str, raw_resource_dict: Dict) -> Tuple[bool, str]:
-        """
-        State Differential Logic.
-        Calculates the SHA256 hash of the JSON resource. If it matches the hash in Redis,
-        the resource hasn't changed, and we can skip sending it to Neo4j.
-        """
-        if not self.use_state_cache or not self.redis_client:
-            return True, ""
-
-        try:
-            serialized_data = json.dumps(raw_resource_dict, sort_keys=True, default=str)
-            current_hash = hashlib.sha256(serialized_data.encode('utf-8')).hexdigest()
+        # Deep Name Extraction Matrix
+        name = (
+            raw_data.get("Name") or 
+            raw_data.get("InstanceId") or 
+            raw_data.get("RoleName") or 
+            raw_data.get("GroupId") or 
+            raw_data.get("DBInstanceIdentifier") or 
+            raw_data.get("name") or 
+            arn.split(":")[-1].split("/")[-1]
+        )
+        
+        # Tag Normalization (AWS standardizes to 'Tags' list of dicts, Azure to 'tags' dict)
+        normalized_tags = {}
+        raw_tags = raw_data.get("Tags") or raw_data.get("tags") or []
+        if isinstance(raw_tags, list):
+            for t in raw_tags:
+                if isinstance(t, dict) and "Key" in t and "Value" in t:
+                    normalized_tags[t["Key"]] = t["Value"]
+        elif isinstance(raw_tags, dict):
+            normalized_tags = raw_tags
             
-            cache_key = f"cloudscape:state:{self.tenant.id}:{resource_arn}"
-            previous_hash = await self.redis_client.get(cache_key)
-
-            if previous_hash == current_hash:
-                return False, current_hash # No change, skip ingestion
-            
-            # The hash has changed (or is new), update cache (Hardcoded 7 days to avoid config errors)
-            ttl_seconds = 7 * 86400
-            await self.redis_client.setex(cache_key, ttl_seconds, current_hash)
-            return True, current_hash
-            
-        except RedisError as e:
-            self.logger.warning(f"State Cache failure during hash check for {resource_arn}: {e}. Defaulting to full ingest.")
-            return True, ""
-        except Exception as e:
-            self.logger.error(f"Hash calculation error for {resource_arn}: {e}")
-            return True, ""
-
-    def format_urm_payload(self, namespace: str, resource_type: str, resource_arn: str, 
-                           raw_data: Dict, baseline_risk: float) -> Dict[str, Any]:
-        """
-        Transforms raw Cloud API JSON into the Universal Resource Model (URM).
-        """
         return {
+            "tenant_id": self.tenant.id,
+            "cloud_provider": "unknown", # Must be overridden by child class (e.g., 'aws', 'azure')
+            "service": service.lower(),
+            "type": resource_type,
+            "arn": arn,
+            "name": name,
+            "tags": normalized_tags,
             "metadata": {
-                "tenant_id": self.tenant.id,
-                "provider": self.tenant.provider,
-                "namespace": namespace,
+                **raw_data,
+                "arn": arn,
                 "resource_type": resource_type,
-                "arn": resource_arn,
-                "discovery_timestamp": datetime.now(timezone.utc).isoformat(),
-                "baseline_risk_score": baseline_risk
-            },
-            "properties": raw_data,
-            "tags": raw_data.get("Tags", raw_data.get("tags", {})) 
+                "baseline_risk_score": float(baseline_risk),
+                "last_seen": datetime.now(timezone.utc).isoformat(),
+                "is_simulated": False
+            }
         }
 
-    # --------------------------------------------------------------------------
-    # ABSTRACT METHODS
-    # --------------------------------------------------------------------------
-    
-    @abc.abstractmethod
-    async def test_connection(self) -> bool:
-        """Validates credentials and endpoint connectivity."""
-        pass
+    async def check_state_differential(self, arn: str, current_state: Dict[str, Any]) -> Tuple[bool, str]:
+        """
+        Advanced performance optimization.
+        Calculates a SHA-256 hash of the incoming resource payload. 
+        If the hash matches the cache, the engine drops the payload early,
+        saving the Neo4j database massive write-I/O during Convergence.
+        """
+        self.metrics["state_hashes_calculated"] += 1
+        try:
+            # Strip highly volatile fields before hashing to prevent false positives
+            clean_state = {k: v for k, v in current_state.items() if k not in ["last_seen", "ResponseMetadata", "Metrics"]}
+            
+            # Sort keys to ensure deterministic hashing across different Python processes
+            state_string = json.dumps(clean_state, sort_keys=True, default=str)
+            state_hash = hashlib.sha256(state_string.encode('utf-8')).hexdigest()
+            
+            # FUTURE: Integrate Redis check here: 
+            # if await redis.get(f"state:{arn}") == state_hash: return False, state_hash
+            
+            # Currently defaulting to True (force write) until Redis caching is enabled in Path B
+            return True, state_hash
+            
+        except Exception as e:
+            self.logger.debug(f"State differential calculation failed for {arn}, defaulting to physical overwrite. {e}")
+            return True, "hash_error"
 
-    @abc.abstractmethod
-    async def run_full_discovery(self) -> List[Dict[str, Any]]:
-        """Reads registry, iterates services, applies state diff, returns URM."""
-        pass
-    
-    async def cleanup(self):
-        """Gracefully closes connections (like the Redis pool)."""
-        if self.redis_client:
-            await self.redis_client.close()
+    def get_execution_metrics(self) -> Dict[str, Any]:
+        """Exposes internal forensic metrics to the Orchestrator for terminal reporting."""
+        return self.metrics
+
+    # ==========================================================================
+    # ABSTRACT CONTRACTS (CHILD OBLIGATIONS)
+    # ==========================================================================
+
+    async def test_connection(self) -> bool:
+        """
+        Contract: Child classes must implement identity validation logic.
+        Validates STS / ARM connectivity before global sweeps begin.
+        """
+        raise NotImplementedError("Child discovery engines must implement test_connection().")
+
+    async def discover(self) -> List[Dict[str, Any]]:
+        """
+        Contract: Child classes must implement resource extraction logic.
+        Must return a flat List of URM-compliant payload dictionaries.
+        """
+        raise NotImplementedError("Child discovery engines must implement discover().")

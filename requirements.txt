@@ -1,68 +1,58 @@
 # ==============================================================================
-# PROJECT CLOUDSCAPE: NEXUS v5.0 AETHER - MASTER DEPENDENCY MATRIX
+# CLOUDSCAPE NEXUS 5.0 - ENTERPRISE DEPENDENCIES
 # ==============================================================================
-# Provisioning: `pip install -r requirements.txt`
+# This file defines the strict cryptographic, network, and cloud-provider 
+# SDK versions required to operate the multi-cloud graph extraction mesh.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# 1. CORE ARCHITECTURE & SCHEMA VALIDATION (AETHER ENGINE)
+# 1. CORE SECURITY & CRYPTOGRAPHY
 # ------------------------------------------------------------------------------
-# Pydantic v2 is the backbone of the Configuration Manager singleton.
-pydantic==2.6.4
-pydantic-settings==2.2.1
-PyYAML==6.0.1
-python-dotenv==1.0.1
-typing-extensions==4.10.0
+# FIXED: Strictly defining cryptography versions to prevent the 'x509' Rust 
+# binding conflict with Azure SDKs during deep environment scans.
+cryptography>=42.0.5
+pyOpenSSL>=24.0.0
+certifi>=2024.2.2
 
 # ------------------------------------------------------------------------------
-# 2. AWS DISCOVERY SDK (LOCALSTACK & AWS COMPATIBLE)
+# 2. GRAPH DATABASE & INTELLIGENCE MATRICES
 # ------------------------------------------------------------------------------
-boto3==1.34.69
-botocore==1.34.69
+# neo4j: Powers the async Bolt protocol for the Materialization Ingestor
+# networkx: Powers the Heuristic Attack Path Discovery (HAPD) engine
+neo4j>=5.17.0
+networkx>=3.2.1
 
 # ------------------------------------------------------------------------------
-# 3. AZURE ENTERPRISE SDK (TRACK 2 - FULL SUITE)
+# 3. STATE MANAGEMENT & CONCURRENCY
 # ------------------------------------------------------------------------------
-# Added 'azure-mgmt-resource' and 'azure-identity' to resolve the recent crash.
-azure-identity==1.15.0         # Auth (ClientSecretCredential)
-azure-mgmt-resource==23.0.0     # Resource Management (CRITICAL FIX)
-azure-mgmt-core==1.4.0          # Core ARM logic
-azure-mgmt-compute==30.1.0      # Virtual Machines, Scale Sets
-azure-mgmt-network==25.3.0      # VNets, NSGs, Peering
-azure-mgmt-storage==21.1.0      # Storage Accounts, Blob Containers
-azure-mgmt-keyvault==10.3.0     # Key Vaults (Cross-Cloud Secret Mapping)
-azure-mgmt-sql==3.0.1           # Azure SQL Databases
-azure-mgmt-authorization==4.0.0 # Role Assignments & Definitions (IAM)
+# redis: Powers the differential state hashing and cache backends
+# aiohttp: Mandatory underlying async web transport for Azure
+redis>=5.0.1
+aiohttp>=3.9.3
+aiosignal>=1.3.1
 
 # ------------------------------------------------------------------------------
-# 4. GRAPH INTELLIGENCE & ATTACK PATH MATHEMATICS
+# 4. AWS EXTRACTION FABRIC
 # ------------------------------------------------------------------------------
-# Neo4j for persistence, NetworkX for in-memory Dijkstra pathfinding.
-neo4j==5.18.0
-networkx==3.2.1                 # Graph Math Brain (FIXED)
-numpy==1.26.4                   # Numerical weighting for risk scores
-pandas==2.2.1                   # Forensic evidence formatting (FIXED)
+# boto3/botocore: Bound together to ensure paginator and URM stability
+boto3>=1.34.50
+botocore>=1.34.50
+s3transfer>=0.10.0
 
 # ------------------------------------------------------------------------------
-# 5. STATE DIFFERENTIAL & CACHING ENGINE
+# 5. AZURE MANAGEMENT & DISCOVERY SDKS
 # ------------------------------------------------------------------------------
-# Required for the 'enable_state_differential' flag in the Orchestrator.
-redis==5.0.3
+# Highly specific ARM (Azure Resource Manager) libraries required for Path B
+azure-core>=1.30.0
+azure-identity>=1.15.0
+azure-storage-blob>=12.19.0
+azure-mgmt-resource>=23.0.1
+azure-mgmt-compute>=30.0.0
+azure-mgmt-network>=25.0.0
 
 # ------------------------------------------------------------------------------
-# 6. ASYNCHRONOUS PERFORMANCE & NETWORKING
+# 6. CONFIGURATION & SERIALIZATION
 # ------------------------------------------------------------------------------
-# uvloop for Linux performance; httpx for modern async telemetry.
-uvloop==0.19.0; sys_platform != 'win32'
-httpx==0.27.0
-requests==2.31.0
-urllib3==2.2.1
-certifi==2024.2.2
-cryptography==42.0.5
-
-# ------------------------------------------------------------------------------
-# 7. AETHER VISUALIZATION LAYER (UI)
-# ------------------------------------------------------------------------------
-streamlit==1.32.2               # Nexus Command Center UI
-plotly==5.19.0                  # Interactive 3D Graph visualization
-watchdog==4.0.0                 # Hot-reloading for forensic reports
+# PyYAML: Parses the tenants.yaml and settings.yaml configurations
+PyYAML>=6.0.1
+python-dateutil>=2.9.0
