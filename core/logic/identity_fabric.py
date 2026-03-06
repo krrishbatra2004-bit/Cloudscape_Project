@@ -1,5 +1,6 @@
 import logging
 import json
+import urllib.parse
 import traceback
 from typing import List, Dict, Any
 
@@ -7,8 +8,9 @@ from typing import List, Dict, Any
 # CLOUDSCAPE NEXUS 5.0 TITAN - IDENTITY FABRIC
 # ==============================================================================
 # The Cross-Cloud Trust Engine.
-# Parses complex IAM Trust Documents, Azure Role Assignments, and OIDC federations
-# to materialize implicit privilege escalation pathways as physical Graph Edges.
+# Parses complex IAM Trust Documents, Azure Role Assignments, OIDC federations,
+# and Storage Metadata secrets to materialize implicit privilege escalation 
+# pathways and cross-cloud bridges as physical Graph Edges.
 # ==============================================================================
 
 class IdentityFabric:
@@ -18,20 +20,23 @@ class IdentityFabric:
         # Edge Weights for HAPD (Heuristic Attack Path Discovery)
         # Lower weight = easier/faster lateral movement path for an attacker
         self.WEIGHT_DIRECT_ASSUME = 1.0
-        self.WEIGHT_FEDERATED_TRUST = 1.5
         self.WEIGHT_MANAGED_IDENTITY = 1.2
+        self.WEIGHT_FEDERATED_TRUST = 1.5
         self.WEIGHT_IMPLICIT_SERVICE = 2.0
+        self.WEIGHT_CROSS_CLOUD_LEAK = 0.5  # Critical priority bypass route
 
     def calculate_cross_cloud_trusts(self, unified_graph: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         The Master Identity Execution Loop.
-        Ingests the physical unified graph and outputs explicit relationship edges.
+        Ingests the physical unified graph, analyzes Universal Resource Models (URM),
+        and outputs explicit directional relationship edges.
         """
         self.logger.info("Igniting Cross-Cloud Identity Traversal Matrix...")
         explicit_edges: List[Dict[str, Any]] = []
         
         # 1. Build an O(1) Memory Registry for microsecond ARN lookups
-        registry = {node.get("arn") or node.get("metadata", {}).get("arn"): node for node in unified_graph if node.get("type") != "explicit_edge"}
+        # Strictly binds to the 'arn' root key established by the BaseEngine URM
+        registry = {node.get("arn"): node for node in unified_graph if node.get("type") != "explicit_edge" and node.get("arn")}
         
         if not registry:
             self.logger.warning("Unified graph is empty. Identity Fabric bypassing.")
@@ -39,10 +44,8 @@ class IdentityFabric:
 
         # 2. Parallel Evaluation Iteration
         for arn, node in registry.items():
-            if not arn: continue
-            
-            node_type = node.get("type", "").lower()
-            service = node.get("service", "").lower()
+            node_type = str(node.get("type", "")).lower()
+            service = str(node.get("service", "")).lower()
             
             try:
                 # --- AWS IDENTITY ANALYSIS ---
@@ -59,6 +62,11 @@ class IdentityFabric:
                     edges = self._parse_azure_managed_identities(node, registry)
                     explicit_edges.extend(edges)
                     
+                # --- CROSS-CLOUD DATA PLANE ANALYSIS ---
+                elif node_type in ["bucket", "storageblob", "storagecontainer"]:
+                    edges = self._parse_cross_cloud_storage_metadata(node, registry)
+                    explicit_edges.extend(edges)
+                    
             except Exception as e:
                 self.logger.error(f"Failed to calculate identity matrix for {arn}: {e}")
                 self.logger.debug(traceback.format_exc())
@@ -71,7 +79,7 @@ class IdentityFabric:
     # ==========================================================================
 
     def _generate_edge(self, source_arn: str, target_arn: str, relation: str, weight: float, vector: str) -> Dict[str, Any]:
-        """Strictly formats an edge for the Titan Graph Ingestor."""
+        """Strictly formats an edge for the Titan Graph Ingestor UNWIND schema."""
         return {
             "type": "explicit_edge",
             "source_arn": source_arn,
@@ -95,20 +103,20 @@ class IdentityFabric:
         Identifies exact Principals (Services, Accounts, Federated OIDC) capable of assuming it.
         """
         edges = []
-        target_role_arn = role_node.get("metadata", {}).get("arn")
-        raw_policy = role_node.get("metadata", {}).get("AssumeRolePolicyDocument")
+        target_role_arn = role_node.get("arn")
+        raw_data = role_node.get("raw_data", {})
+        raw_policy = raw_data.get("AssumeRolePolicyDocument")
         
         if not raw_policy or not target_role_arn:
             return edges
 
-        # Defensively handle URL-encoded or stringified JSON policies
+        # Defensively handle URL-encoded or stringified JSON policies returned by LocalStack
         if isinstance(raw_policy, str):
             try:
-                import urllib.parse
                 decoded = urllib.parse.unquote(raw_policy)
                 policy = json.loads(decoded)
             except json.JSONDecodeError:
-                self.logger.debug(f"Could not parse stringified policy for {target_role_arn}")
+                self.logger.debug(f"Could not parse stringified trust policy for {target_role_arn}")
                 return edges
         else:
             policy = raw_policy
@@ -137,7 +145,7 @@ class IdentityFabric:
                 if p == "*":
                     # Critical Vulnerability: Globally assumable role
                     role_node.setdefault("tags", {})["Exposure"] = "Public"
-                    role_node.setdefault("metadata", {})["baseline_risk_score"] = 10.0
+                    role_node["risk_score"] = 1.0  # Maximize root risk score for URM
                 elif isinstance(p, str) and "arn:aws:iam" in p:
                     edges.append(self._generate_edge(
                         source_arn=p, 
@@ -178,16 +186,17 @@ class IdentityFabric:
     def _parse_aws_instance_profiles(self, ec2_node: Dict[str, Any], registry: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Maps an EC2 instance directly to its IAM Role via the Instance Profile."""
         edges = []
-        source_arn = ec2_node.get("metadata", {}).get("arn")
-        profile = ec2_node.get("metadata", {}).get("IamInstanceProfile", {})
+        source_arn = ec2_node.get("arn")
+        raw_data = ec2_node.get("raw_data", {})
+        profile = raw_data.get("IamInstanceProfile", {})
         
         if not profile or not source_arn:
             return edges
             
         profile_arn = profile.get("Arn", "")
         if profile_arn:
-            # Note: Instance Profile ARNs are slightly different than Role ARNs, 
-            # HAPD will traverse this to find the actual policies attached.
+            # Note: Instance Profile ARNs differ slightly from Role ARNs, 
+            # NetworkX will traverse this gap during HAPD graph construction.
             edges.append(self._generate_edge(
                 source_arn=source_arn,
                 target_arn=profile_arn,
@@ -208,8 +217,9 @@ class IdentityFabric:
         Creates lateral movement edges from Compute to Identity.
         """
         edges = []
-        source_arn = vm_node.get("metadata", {}).get("id") or vm_node.get("metadata", {}).get("arn")
-        identity = vm_node.get("metadata", {}).get("identity", {})
+        source_arn = vm_node.get("arn")
+        raw_data = vm_node.get("raw_data", {})
+        identity = raw_data.get("identity", {})
         
         if not identity or not source_arn:
             return edges
@@ -241,5 +251,58 @@ class IdentityFabric:
                     weight=self.WEIGHT_MANAGED_IDENTITY,
                     vector="User-Assigned-Trust"
                 ))
+
+        return edges
+
+    # ==========================================================================
+    # CROSS-CLOUD FEDERATION (THE HYBRID BRIDGE)
+    # ==========================================================================
+
+    def _parse_cross_cloud_storage_metadata(self, storage_node: Dict[str, Any], registry: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        The true Hybrid Mesh linkage. 
+        Actively inspects the URM metadata of Azure Blobs and S3 Buckets for 
+        simulated or leaked cross-cloud credentials, drawing explicit bridges.
+        """
+        edges = []
+        source_arn = storage_node.get("arn")
+        raw_data = storage_node.get("raw_data", {})
+        metadata = raw_data.get("Metadata", {})
+        
+        if not metadata or not source_arn:
+            return edges
+
+        # Ensure dictionary operations are case-insensitive for metadata keys
+        clean_meta = {str(k).lower(): str(v) for k, v in metadata.items()}
+
+        # 1. Detect AWS Keys residing in Azure Storage
+        aws_key = clean_meta.get("aws_access_key_id") or clean_meta.get("x-amz-meta-aws_access_key_id")
+        if aws_key:
+            target_arn = f"arn:aws:iam::metadata_leak:access_key/{aws_key}"
+            edges.append(self._generate_edge(
+                source_arn=source_arn,
+                target_arn=target_arn,
+                relation="CONTAINS_CREDENTIAL",
+                weight=self.WEIGHT_CROSS_CLOUD_LEAK,
+                vector="Azure-to-AWS-Leak"
+            ))
+            # Escalate the source storage node risk
+            storage_node["risk_score"] = 1.0
+            storage_node.setdefault("tags", {})["DataClassification"] = "CompromisedSecret"
+
+        # 2. Detect Azure Tenant/Client Secrets residing in AWS S3
+        azure_secret = clean_meta.get("azure_tenant_id") or clean_meta.get("azure_client_secret")
+        if azure_secret:
+            target_arn = f"azure:active-directory:tenant/{azure_secret}"
+            edges.append(self._generate_edge(
+                source_arn=source_arn,
+                target_arn=target_arn,
+                relation="CONTAINS_CREDENTIAL",
+                weight=self.WEIGHT_CROSS_CLOUD_LEAK,
+                vector="AWS-to-Azure-Leak"
+            ))
+            # Escalate the source storage node risk
+            storage_node["risk_score"] = 1.0
+            storage_node.setdefault("tags", {})["DataClassification"] = "CompromisedSecret"
 
         return edges

@@ -1,3 +1,13 @@
 .\utils\reset_environment.ps1
 utils/launch_cloudscape.ps1
 pip install -r requirements.txt
+
+$env:AWS_ACCESS_KEY_ID="testing"
+$env:AWS_SECRET_ACCESS_KEY="testing"
+$env:AWS_DEFAULT_REGION="us-east-1"
+
+git add .
+git commit -m "Titan 5.0.1 | Stability Patch | Gatekeeper Stagger Implemented | Dynamic Resolver Active | State: Pre-Path-Discovery"
+
+git branch -M main
+git push -u origin main

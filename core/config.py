@@ -1,60 +1,82 @@
 import os
-import sys
-import json
 import yaml
+import json
 import logging
+import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional, Any
+
 from pydantic import BaseModel, Field, ValidationError
 
 # ==============================================================================
-# ENTERPRISE CONFIGURATION VALIDATOR & STATE MANAGER (NEXUS 5.0 AETHER)
+# CLOUDSCAPE NEXUS 5.0 TITAN - CONFIGURATION MANAGER
 # ==============================================================================
-# Resolves absolute paths mathematically to ensure Docker/Host execution consistency
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_DIR = PROJECT_ROOT / "config"
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s")
-logger = logging.getLogger("Cloudscape.Config")
+# The strict Type-Safe configuration gateway powered by Pydantic V2.
+# Maps the YAML state into immutable Python memory structures. Guarantees that
+# the system never executes with corrupted, missing, or mismatched parameters.
+# ==============================================================================
 
 # ------------------------------------------------------------------------------
-# 1. PYDANTIC SCHEMAS FOR SETTINGS.YAML
+# NESTED SYSTEM MODELS
 # ------------------------------------------------------------------------------
 
 class AppMetadata(BaseModel):
-    name: str = Field(..., description="Application Name")
-    version: str = Field(..., description="Semantic Versioning")
-    description: str
+    name: str
+    version: str
+    author: Optional[str] = "Aether-Titan"
+    description: Optional[str] = ""
+    environment: str = "MOCK"
+
+class SystemConfig(BaseModel):
+    log_level: str = "INFO"
+    ingestion_chunk_size: int = Field(ge=100, le=20000, default=500)
+    max_concurrency_per_engine: int = 50
+    telemetry_enabled: bool = True
+
+class AWSConfig(BaseModel):
+    target_regions: List[str] = ["us-east-1"]
+
+class AzureConfig(BaseModel):
+    target_subscription: str = "mock-azure-sub-0001"
 
 class DatabaseIngestion(BaseModel):
-    batch_size: int = Field(default=2500, ge=100, le=20000, description="UNWIND chunk size")
+    batch_size: int = Field(ge=100, le=20000, default=1000)
+    retries: int = 5
+    backoff_factor: float = 1.5
 
 class DatabaseConfig(BaseModel):
-    uri: str = Field(..., description="Neo4j Bolt URI")
-    connection_pool_size: int = Field(default=100, ge=1)
-    connection_timeout_sec: int = Field(default=15)
-    transaction_retry_time_sec: int = Field(default=30)
+    uri: str
+    user: str
+    password: str
+    redis_uri: str
+    connection_pool_size: int = 100
+    connection_timeout_sec: int = 15
+    transaction_retry_time_sec: int = 30
     ingestion: DatabaseIngestion
 
-# [AETHER UPGRADE] Fully saturated Orchestrator block for legacy engine compatibility
 class OrchestratorConfig(BaseModel):
-    max_concurrent_tenants: int = Field(default=10, ge=1)
-    hybrid_merge_strategy: str = Field(default="deep_merge")
-    enable_state_differential: bool = Field(default=False, description="Use state cache to avoid re-ingesting unchanged nodes")
-    worker_timeout_sec: int = Field(default=300, ge=30, description="Max execution time per tenant worker")
+    max_concurrent_tenants: int = 10
+    max_workers: int = 20
+    timeout: int = 300
+    hybrid_merge_strategy: str = "deep_merge"
+    enable_state_differential: bool = True
+    worker_timeout_sec: int = 300
 
 class ForensicsConfig(BaseModel):
-    output_directory: str
+    log_path: str = "forensics/logs"
+    report_path: str = "forensics/reports"
+    output_directory: str = "forensics/reports"
+    retention_days: int = 7
     generate_json_evidence: bool = True
     compress_reports: bool = True
     slack_alerts_enabled: bool = False
 
 class RiskScoringConfig(BaseModel):
     enabled: bool = True
-    public_exposure_penalty: float = Field(default=25.0, ge=0.0)
-    admin_privilege_penalty: float = Field(default=50.0, ge=0.0)
+    public_exposure_penalty: float = 25.0
+    admin_privilege_penalty: float = 50.0
 
-class EPRConfig(BaseModel):
+class PermissionResolverConfig(BaseModel):
     enabled: bool = True
     flag_wildcard_actions: bool = True
 
@@ -63,142 +85,159 @@ class IdentityFabricConfig(BaseModel):
     flag_shadow_admins: bool = True
     cross_cloud_mapping: bool = True
 
-class AttackPathDetectionConfig(BaseModel):
+class AttackPathConfig(BaseModel):
     enabled: bool = True
-    max_path_cost: float = Field(default=20.0, gt=0.0)
-    target_tags: List[str] = Field(default=["critical", "high"])
+    max_path_cost: float = 20.0
+    target_tags: List[str] = ["critical", "high"]
 
 class LogicEngineConfig(BaseModel):
+    risk_threshold: float = 0.7
+    max_depth: int = 5
     risk_scoring: RiskScoringConfig
-    effective_permission_resolver: EPRConfig
+    effective_permission_resolver: PermissionResolverConfig
     identity_fabric: IdentityFabricConfig
-    attack_path_detection: AttackPathDetectionConfig
+    attack_path_detection: AttackPathConfig
 
 class SimulationConfig(BaseModel):
     enabled: bool = True
-    vulnerability_injection_rate: float = Field(default=0.05, ge=0.0, le=1.0)
-    base_node_multiplier: int = Field(default=50, ge=1)
+    synthetic_node_count: int = 200
+    vulnerability_density: float = 0.4
+    vulnerability_injection_rate: float = 0.05
+    base_node_multiplier: int = 50
 
 class CrawlingConfig(BaseModel):
-    api_retry_max_attempts: int = Field(default=3, ge=1, description="Max network retries for 429/500 responses")
-    api_retry_backoff_factor: float = Field(default=2.0, ge=1.0, description="Exponential backoff multiplier")
-    timeout_seconds: int = Field(default=30, ge=5, description="Global API socket timeout limit")
-    max_pagination_depth: int = Field(default=100, ge=1, description="Circuit breaker for infinite API pagination")
-    concurrency_limit: int = Field(default=20, ge=1, description="Max simultaneous async workers per tenant")
-    fail_open_on_access_denied: bool = Field(default=False, description="If True, skips 403s instead of crashing")
-    rate_limit_calls_per_sec: float = Field(default=10.0, gt=0.0, description="Hard throttle for API dispatchers")
-    verify_ssl: bool = Field(default=True, description="Strict TLS verification")
-    max_worker_threads: int = Field(default=10, ge=1, description="Dedicated thread pool for blocking Boto3/Azure calls")
-    user_agent: str = Field(default="Cloudscape-Nexus/5.0", description="Telemetry header identification")
+    depth: int = 3
+    concurrency: int = 10
+    rate_limit: int = 100
+    api_retry_max_attempts: int = 5
+    api_retry_backoff_factor: float = 2.0
+    timeout_seconds: int = 30
+    max_pagination_depth: int = 100
+    concurrency_limit: int = 50
+    fail_open_on_access_denied: bool = False
+    rate_limit_calls_per_sec: float = 20.0
+    verify_ssl: bool = True
+    max_worker_threads: int = 50
+    user_agent: str = "Cloudscape-Nexus-Titan/5.0"
+
+# ------------------------------------------------------------------------------
+# TENANT & IDENTITY MODELS
+# ------------------------------------------------------------------------------
+
+class TenantCredentials(BaseModel):
+    aws_access_key_id: str = "testing"
+    aws_secret_access_key: str = "testing"
+    aws_account_id: Optional[str] = None
+    azure_subscription_id: Optional[str] = None
+    azure_tenant_id: Optional[str] = None
+    azure_client_id: Optional[str] = None
+    azure_client_secret: Optional[str] = None
+
+class TenantConfig(BaseModel):
+    id: str
+    name: str
+    # Expanded regex to permit MOCK and TESTING environments without failure
+    environment_type: str = Field(..., pattern=r"^(?i)(production|development|sandbox|dr|finance|shared-services|testing|staging|mock)$")
+    credentials: TenantCredentials
+
+# ------------------------------------------------------------------------------
+# ROOT SETTINGS MODEL
+# ------------------------------------------------------------------------------
 
 class Settings(BaseModel):
     app_metadata: AppMetadata
+    execution_mode: str = "MOCK"
+    system: SystemConfig
+    aws: AWSConfig
+    azure: AzureConfig
     database: DatabaseConfig
     orchestrator: OrchestratorConfig
     forensics: ForensicsConfig
     logic_engine: LogicEngineConfig
     simulation: SimulationConfig
     crawling: CrawlingConfig
+    service_registry: Dict[str, Any] = {}
 
 # ------------------------------------------------------------------------------
-# 2. PYDANTIC SCHEMAS FOR TENANTS.YAML
-# ------------------------------------------------------------------------------
-
-class TenantCredentials(BaseModel):
-    aws_access_key_id: Optional[str] = None
-    aws_secret_access_key: Optional[str] = None
-    aws_default_region: Optional[str] = "us-east-1"
-    aws_account_id: Optional[str] = None 
-    
-    azure_tenant_id: Optional[str] = None
-    azure_client_id: Optional[str] = None
-    azure_client_secret: Optional[str] = None
-    azure_subscription_id: Optional[str] = None
-
-class TenantConfig(BaseModel):
-    id: str = Field(..., description="Unique Tenant Identifier")
-    name: str = Field(..., description="Human readable name")
-    provider: str = Field(..., pattern="^(?i)(aws|azure)$")
-    environment_type: str = Field(default="production", pattern="^(?i)(production|development|sandbox|dr|finance|shared-services)$")
-    credentials: TenantCredentials
-    tags: Dict[str, str] = Field(default_factory=dict)
-
-# ------------------------------------------------------------------------------
-# 3. GLOBAL CONFIGURATION MANAGER
+# CONFIGURATION MANAGER (THE SINGLETON)
 # ------------------------------------------------------------------------------
 
 class ConfigurationManager:
-    """
-    Singleton class that reads, mathematically validates, and locks the global 
-    application state into memory.
-    """
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(ConfigurationManager, cls).__new__(cls)
-            cls._instance._initialize()
-        return cls._instance
-
-    def _initialize(self):
-        """Executes the strict loading and validation sequence."""
-        self.settings: Settings = self._load_settings()
-        self.tenants: List[TenantConfig] = self._load_tenants()
-        self.service_registry: Dict[str, Any] = self._load_registry()
+    def __init__(self):
+        # Establish absolute paths dynamically regardless of execution directory
+        self.base_dir = Path(__file__).parent.parent
+        self.config_dir = self.base_dir / "config"
+        self.registry_dir = self.base_dir / "registry"
         
-        logger.info(f"Configuration Manager Initialized. Aether Features Loaded successfully.")
-
-    def _read_yaml(self, filepath: Path) -> Dict[str, Any]:
-        """Safely parses YAML files."""
-        if not filepath.exists():
-            logger.critical(f"FATAL: Required configuration file missing: {filepath}")
-            sys.exit(1)
-        try:
-            with open(filepath, 'r', encoding='utf-8') as file:
-                return yaml.safe_load(file) or {}
-        except yaml.YAMLError as e:
-            logger.critical(f"FATAL: Malformed YAML in {filepath.name}: {e}")
-            sys.exit(1)
-
-    def _load_settings(self) -> Settings:
-        """Loads and strictly validates settings.yaml"""
-        settings_path = CONFIG_DIR / "settings.yaml"
-        raw_settings = self._read_yaml(settings_path)
-        try:
-            return Settings(**raw_settings)
-        except ValidationError as e:
-            logger.critical(f"FATAL: Schema validation failed for settings.yaml:\n{e.json(indent=2)}")
-            sys.exit(1)
-
-    def _load_tenants(self) -> List[TenantConfig]:
-        """Loads and strictly validates tenants.yaml"""
-        tenants_path = CONFIG_DIR / "tenants.yaml"
-        raw_data = self._read_yaml(tenants_path)
-        raw_tenants = raw_data.get("tenants", [])
+        # Logging initialization
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s"
+        )
+        self.logger = logging.getLogger("Cloudscape.Config")
         
-        valid_tenants = []
+        # State Containers
+        self.settings: Settings = None
+        self.tenants: List[TenantConfig] = []
+        
+        # Ignition Sequence
+        self._load_settings()
+        self._load_tenants()
+        self.logger.info("Configuration Manager Initialized. Aether Features Loaded successfully.")
+
+    def _load_settings(self):
+        """Loads and validates the main configuration matrix."""
+        settings_path = self.config_dir / "settings.yaml"
+        if not settings_path.exists():
+            self.logger.critical(f"FATAL: Master configuration missing at {settings_path}")
+            sys.exit(1)
+            
         try:
-            for t_dict in raw_tenants:
-                valid_tenants.append(TenantConfig(**t_dict))
-            return valid_tenants
-        except ValidationError as e:
-            logger.critical(f"FATAL: Schema validation failed for tenants.yaml:\n{e.json(indent=2)}")
+            with open(settings_path, 'r', encoding='utf-8') as file:
+                raw_settings = yaml.safe_load(file) or {}
+                
+            # Attempt to overlay the legacy service_registry.json if present
+            registry_path = self.config_dir / "service_registry.json"
+            if registry_path.exists() and "service_registry" not in raw_settings:
+                with open(registry_path, 'r', encoding='utf-8') as reg_file:
+                    raw_settings["service_registry"] = json.load(reg_file)
+
+            # Engage Pydantic Validation Matrix
+            self.settings = Settings(**raw_settings)
+            
+        except ValidationError as ve:
+            self.logger.critical("FATAL: Schema validation failed for settings.yaml:")
+            self.logger.critical(ve.json(indent=2))
+            sys.exit(1)
+        except Exception as e:
+            self.logger.critical(f"FATAL: Unhandled configuration read error: {e}")
             sys.exit(1)
 
-    def _load_registry(self) -> Dict[str, Any]:
-        """Loads the Universal Service Registry JSON."""
-        registry_path = CONFIG_DIR / "service_registry.json"
-        if not registry_path.exists():
-            logger.critical(f"FATAL: Required registry file missing: {registry_path}")
+    def _load_tenants(self):
+        """Loads and validates the multi-tenant physical environments."""
+        # Check both config/ and registry/ directories for flexibility
+        tenant_path = self.config_dir / "tenants.yaml"
+        if not tenant_path.exists():
+            tenant_path = self.registry_dir / "tenants.yaml"
+            
+        if not tenant_path.exists():
+            self.logger.critical("FATAL: Multi-tenant map (tenants.yaml) is missing.")
             sys.exit(1)
+            
         try:
-            with open(registry_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            logger.critical(f"FATAL: Malformed JSON in service_registry.json: {e}")
+            with open(tenant_path, 'r', encoding='utf-8') as file:
+                raw_tenants = yaml.safe_load(file)
+                
+            tenant_list = raw_tenants.get("tenants", []) if isinstance(raw_tenants, dict) else raw_tenants
+            self.tenants = [TenantConfig(**t) for t in tenant_list]
+            
+        except ValidationError as ve:
+            self.logger.critical("FATAL: Schema validation failed for tenants.yaml:")
+            self.logger.critical(ve.json(indent=2))
+            sys.exit(1)
+        except Exception as e:
+            self.logger.critical(f"FATAL: Failed to map tenants: {e}")
             sys.exit(1)
 
-# ==============================================================================
-# GLOBAL EXPORT
-# ==============================================================================
+# Export the singleton instance
 config = ConfigurationManager()

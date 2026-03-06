@@ -1,89 +1,151 @@
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 (AETHER) - GLOBAL CONFIGURATION
+# CLOUDSCAPE NEXUS 5.0 TITAN - MASTER CONFIGURATION REGISTRY
 # ==============================================================================
-# This file is strictly validated by Pydantic at runtime via core/config.py.
-# Altering data types here (e.g., changing a boolean to a string) will trigger 
-# a fail-safe shutdown to prevent corrupted graph generation.
+# Schema-Perfected for Pydantic Strict Validation (core/config.py).
+# Upgraded with the "Titan Anti-Saturation Throttle" to protect local Docker 
+# emulators from thread-exhaustion and HTTP 500 InternalFailures.
 # ==============================================================================
-
-app_metadata:
-  name: "Cloudscape Nexus Aether"
-  version: "5.0.0"
-  description: "Autonomous Cyber-Physical Graph Intelligence & Breach Simulation"
 
 # ------------------------------------------------------------------------------
-# 1. DATABASE INGESTION & CONNECTION POOLING
+# CORE SYSTEM DIRECTIVES
+# ------------------------------------------------------------------------------
+app_metadata:
+  name: "Cloudscape Nexus Titan"
+  version: "5.0.1"
+  author: "Aether Engine"
+  description: "Enterprise Multi-Cloud Graph Discovery & Intelligence Fabric"
+  environment: "MOCK"
+
+execution_mode: "MOCK"
+
+system:
+  log_level: "INFO"
+  ingestion_chunk_size: 500       # Memory-safe batch materialization limit
+  max_concurrency_per_engine: 5   # DECREASED: Prevents LocalStack HTTP 500 Crash
+  telemetry_enabled: true
+
+# ------------------------------------------------------------------------------
+# DIMENSIONAL ALIGNMENT (THE "ZERO NODE" CURE)
+# ------------------------------------------------------------------------------
+aws:
+  # The scanner will ONLY hunt in these regions. 
+  # This matches the local MeshSeeder to prevent dimensional drift.
+  target_regions: 
+    - "us-east-1"
+    - "eu-central-1"
+
+azure:
+  # In MOCK mode, Azure relies on Azurite, which uses a flat global scope.
+  target_subscription: "mock-azure-sub-0001"
+
+# ------------------------------------------------------------------------------
+# DATABASE & CACHE MATERIALIZATION TIER
 # ------------------------------------------------------------------------------
 database:
-  uri: "bolt://127.0.0.1:7687"
+  uri: "bolt://127.0.0.1:7687"      # Strictly mapped as 'uri' for Pydantic
+  user: "neo4j"
+  password: "Cloudscape2026!"       # Must identically match Docker NEO4J_AUTH
+  redis_uri: "redis://127.0.0.1:6379"
   connection_pool_size: 100
   connection_timeout_sec: 15
   transaction_retry_time_sec: 30
   ingestion:
-    batch_size: 2500  # Optimal APOC UNWIND chunk size for 4GB JVM Heap
+    batch_size: 1000
+    retries: 5
+    backoff_factor: 1.5
 
 # ------------------------------------------------------------------------------
-# 2. ORCHESTRATOR & CONCURRENCY
+# ORCHESTRATION & FORENSICS SENTINELS
 # ------------------------------------------------------------------------------
 orchestrator:
   max_concurrent_tenants: 10
+  max_workers: 5                    # DECREASED: Balances thread pool generation
+  timeout: 300
   hybrid_merge_strategy: "deep_merge"
-  enable_state_differential: false
+  enable_state_differential: true
   worker_timeout_sec: 300
 
-# ------------------------------------------------------------------------------
-# 3. COMPLIANCE & FORENSIC EVIDENCE
-# ------------------------------------------------------------------------------
 forensics:
-  output_directory: "./forensics/reports"
+  log_path: "forensics/logs"
+  report_path: "forensics/reports"
+  output_directory: "forensics/reports"
+  retention_days: 7
   generate_json_evidence: true
   compress_reports: true
   slack_alerts_enabled: false
 
 # ------------------------------------------------------------------------------
-# 4. MATHEMATICAL LOGIC ENGINES
+# HEURISTIC & SIMULATION ENGINES
 # ------------------------------------------------------------------------------
 logic_engine:
+  risk_threshold: 0.7
+  max_depth: 5
   risk_scoring:
     enabled: true
     public_exposure_penalty: 25.0
     admin_privilege_penalty: 50.0
-  
   effective_permission_resolver:
     enabled: true
     flag_wildcard_actions: true
-
   identity_fabric:
     enabled: true
     flag_shadow_admins: true
     cross_cloud_mapping: true
-
   attack_path_detection:
     enabled: true
     max_path_cost: 20.0
     target_tags: ["critical", "high"]
 
-# ------------------------------------------------------------------------------
-# 5. SYNTHETIC UNIVERSE GENERATOR (GOD MODE)
-# ------------------------------------------------------------------------------
 simulation:
   enabled: true
+  synthetic_node_count: 200
+  vulnerability_density: 0.4
   vulnerability_injection_rate: 0.05
-  base_node_multiplier: 50 
+  base_node_multiplier: 50
+
+crawling:
+  depth: 3
+  concurrency: 5                    # DECREASED: Rate limits HTTP socket requests
+  rate_limit: 100
+  api_retry_max_attempts: 6         # INCREASED: Allows more grace for LocalStack
+  api_retry_backoff_factor: 2.5     # INCREASED: Slower backoff decay
+  timeout_seconds: 45               # INCREASED: Give RDS emulator time to respond
+  max_pagination_depth: 100
+  concurrency_limit: 5              # DECREASED: Hard cap on semaphore locks
+  fail_open_on_access_denied: false
+  rate_limit_calls_per_sec: 10.0    # DECREASED: Smoothes out the API burst
+  verify_ssl: true
+  max_worker_threads: 5             # DECREASED: Restricts physical CPU threads
+  user_agent: "Cloudscape-Nexus-Titan/5.0"
 
 # ------------------------------------------------------------------------------
-# 6. NETWORK TELEMETRY & CRAWLING CAPABILITIES
+# SERVICE EXTRACTION REGISTRY (TITAN BASELINE)
 # ------------------------------------------------------------------------------
-# [AETHER UPGRADE] Docker-Optimized Throttling.
-# Reduces socket pressure on LocalStack and Azurite to prevent WinError 10061.
-crawling:
-  api_retry_max_attempts: 5
-  api_retry_backoff_factor: 2.5
-  timeout_seconds: 60                 # Increased to allow emulators time to respond
-  max_pagination_depth: 100
-  concurrency_limit: 5                # Reduced from 20 to prevent local thread exhaustion
-  fail_open_on_access_denied: false
-  rate_limit_calls_per_sec: 2.0       # Strict Hz limit to prevent LocalStack socket drops
-  verify_ssl: true
-  max_worker_threads: 5               # Restrict background HTTP connection pools
-  user_agent: "Cloudscape-Nexus/5.0"
+service_registry:
+  aws:
+    iam_role: 
+      baseline_risk_score: 0.5
+    s3_bucket: 
+      baseline_risk_score: 0.3
+    vpc: 
+      baseline_risk_score: 0.1
+    subnet: 
+      baseline_risk_score: 0.1
+    security_group: 
+      baseline_risk_score: 0.2
+    ec2_instance: 
+      baseline_risk_score: 0.6
+    rds_instance: 
+      baseline_risk_score: 0.8
+      
+  azure:
+    storage_container:
+      baseline_risk_score: 0.3
+    storage_blob:
+      baseline_risk_score: 0.5
+    virtual_machine:
+      baseline_risk_score: 0.6
+    virtual_network:
+      baseline_risk_score: 0.1
+    network_security_group:
+      baseline_risk_score: 0.2

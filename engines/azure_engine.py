@@ -31,7 +31,7 @@ from engines.base_engine import BaseDiscoveryEngine
 from core.config import config, TenantConfig
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 - ENTERPRISE AZURE DISCOVERY ENGINE
+# CLOUDSCAPE NEXUS 5.0 - ENTERPRISE AZURE DISCOVERY ENGINE (TITAN FULL)
 # ==============================================================================
 # Dual-Mode extraction engine. Natively routes to Azurite in MOCK mode or 
 # Global ARM endpoints in PROPER mode. Implements deterministic async consumption, 
@@ -59,6 +59,7 @@ class AzureEngine(BaseDiscoveryEngine):
         Shields the graph from stale emulator state and cross-tenant contamination.
         """
         if not self.is_mock:
+            # In proper mode, Subscription RBAC inherently provides isolation
             return True
             
         # 1. Check Metadata (Azure metadata dictionaries are usually flat string:string)
@@ -67,7 +68,7 @@ class AzureEngine(BaseDiscoveryEngine):
                 if str(k).lower() == 'cloudscapetenantid' and str(v).lower() == self.tenant.id.lower():
                     return True
                     
-        # 2. Last Resort Fallback (Name matching)
+        # 2. Last Resort Fallback (Semantic Name matching)
         if self.tenant.id.lower() in resource_name.lower():
             return True
             
@@ -124,6 +125,7 @@ class AzureEngine(BaseDiscoveryEngine):
                 return True
                 
         except StopAsyncIteration:
+            # Expected if Azurite is genuinely empty but connectivity is proven
             self.tenant.credentials.azure_subscription_id = "mock-azure-sub-0001"
             self.logger.info("Azurite Gateway Handshake Verified (Empty Mesh).")
             return True
@@ -141,16 +143,15 @@ class AzureEngine(BaseDiscoveryEngine):
     async def discover(self) -> List[Dict[str, Any]]:
         """
         The Master Extraction Orchestrator.
-        Spawns parallel asynchronous threads to extract storage, compute, and 
-        network configurations based on the Execution Mode.
+        Forces the Titan Baseline registry if configuration is empty to prevent scan starvation.
         """
         self.logger.info(f"[{self.tenant.id}] Initiating Azure Telemetry Extraction...")
         total_payloads = []
         
-        # The Registry Force-Load
+        # Registry Hard-Coding (Forces baseline if settings.yaml is missing or empty)
         reg = getattr(config, 'service_registry', {}).get("azure", {})
         if not reg:
-            self.logger.debug(f"[{self.tenant.id}] Registry empty. Forcing Titan extraction defaults.")
+            self.logger.debug(f"[{self.tenant.id}] Registry starvation detected. Injecting Titan Baseline.")
             reg = {
                 "storage_container": {"baseline_risk_score": 0.3},
                 "storage_blob": {"baseline_risk_score": 0.5},
@@ -180,6 +181,7 @@ class AzureEngine(BaseDiscoveryEngine):
                 if "network_security_group" in reg:
                     tasks.append(self._extract_network_security_groups(sub_id, reg["network_security_group"].get("baseline_risk_score", 0.2)))
 
+        # Parallel Execution Matrix
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for result in results:
@@ -364,7 +366,7 @@ class AzureEngine(BaseDiscoveryEngine):
             return []
 
     async def _extract_network_security_groups(self, subscription_id: str, risk: float) -> List[Dict]:
-        """Extracts Azure NSGs and evaluates inbound rule risk."""
+        """Extracts Azure NSGs and evaluates deep inbound port exposure rules."""
         payloads = []
         try:
             client = NetworkManagementClient(credential=self.credential, subscription_id=subscription_id)
