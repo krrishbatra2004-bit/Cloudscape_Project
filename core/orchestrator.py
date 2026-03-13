@@ -62,7 +62,7 @@ AttackPathEngineClass = _dynamic_titan_import(["attack_path", "hapd"], ["AttackP
 # CLOUDSCAPE NEXUS 5.0 - MASTER ORCHESTRATOR (TITAN EDITION)
 # ==============================================================================
 # The Central Nervous System of the Nexus Multi-Cloud Scan.
-# Equipped with Polymorphic Interface Resolvers to survive API Contract Drifts.
+# Perfectly synchronized with the physical API contracts of the sub-modules.
 # ==============================================================================
 
 class CloudscapeOrchestrator:
@@ -72,6 +72,7 @@ class CloudscapeOrchestrator:
         # Instantiate the dynamically resolved classes
         self.ingestor = GraphIngestorClass()
         self.state_factory = StateFactoryClass()
+        self.hybrid_bridge = HybridBridge()
         self.identity_fabric = IdentityFabricClass()
         self.attack_path_engine = AttackPathEngineClass()
         
@@ -112,9 +113,7 @@ class CloudscapeOrchestrator:
         # ----------------------------------------------------------------------
         self.logger.info("Executing Titan Pre-Flight Diagnostics & Schema Validation...")
         try:
-            self.logger.info("Polling Neo4j Database Kernel for physical write-readiness...")
             await self.ingestor.validate_schema()
-            self.logger.info("Graph Schema Validation Complete. Constraints enforced.")
         except Exception as e:
             self.logger.critical(f"FATAL: Database Kernel Validation Failed: {e}")
             self.logger.debug(traceback.format_exc())
@@ -149,30 +148,17 @@ class CloudscapeOrchestrator:
         self.forensics["Phase_1_Extraction"] = time.perf_counter() - p1_start
 
         # ----------------------------------------------------------------------
-        # PHASE 2: SYNTHETIC STATE FORGING (POLYMORPHIC)
+        # PHASE 2: SYNTHETIC STATE FORGING (PHYSICALLY ALIGNED)
         # ----------------------------------------------------------------------
         self.logger.info("Igniting the Titan Synthetic State Factory...")
         p2_start = time.perf_counter()
         
         try:
-            # Hunt for the correct execution method dynamically
-            valid_methods = ['generate_tenant_state', 'generate_state', 'generate', 'forge', 'build']
-            target_method = next((m for m in valid_methods if hasattr(self.state_factory, m)), None)
-            
-            if target_method:
-                func = getattr(self.state_factory, target_method)
-                for tenant in config.tenants:
-                    # Adapt to argument signatures
-                    try:
-                        vulnerabilities = func(tenant.id)
-                    except TypeError:
-                        vulnerabilities = func()
-                        
-                    if vulnerabilities:
-                        self.synthetic_nodes.extend(vulnerabilities)
-            else:
-                self.logger.error("StateFactory lacks a recognized generation method.")
-                
+            for tenant in config.tenants:
+                # Contract Alignment: Passed full TenantConfig to correct method name
+                vulnerabilities = self.state_factory.generate_synthetic_topology(tenant)
+                if vulnerabilities:
+                    self.synthetic_nodes.extend(vulnerabilities)
         except Exception as e:
             self.logger.error(f"Phase 2 Synthetic Forging Failed: {e}")
             self.logger.debug(traceback.format_exc())
@@ -180,27 +166,22 @@ class CloudscapeOrchestrator:
         self.forensics["Phase_2_Forging"] = time.perf_counter() - p2_start
 
         # ----------------------------------------------------------------------
-        # PHASE 3: HYBRID CONVERGENCE (ADAPTIVE CONSTRUCTOR)
+        # PHASE 3: HYBRID CONVERGENCE (PHYSICALLY ALIGNED)
         # ----------------------------------------------------------------------
         self.logger.info("Initializing Chunked Hybrid Convergence Stream...")
         p3_start = time.perf_counter()
         
         try:
-            # Attempt Contract A (Args in Constructor)
-            try:
-                bridge = HybridBridge(self.discovery_results, self.synthetic_nodes)
-                merge_func = getattr(bridge, "merge", getattr(bridge, "converge", getattr(bridge, "build", None)))
-                self.unified_graph = merge_func() if merge_func else []
-            # Attempt Contract B (Args in Method)
-            except TypeError:
-                bridge = HybridBridge()
-                merge_func = getattr(bridge, "merge", getattr(bridge, "converge", getattr(bridge, "build", None)))
-                if merge_func:
-                    self.unified_graph = merge_func(self.discovery_results, self.synthetic_nodes)
+            # Contract Alignment: Employs empty constructor and dedicated merge method
+            self.unified_graph = self.hybrid_bridge.merge_payload_streams(
+                live_stream=self.discovery_results, 
+                synthetic_stream=self.synthetic_nodes
+            )
             
             if self.unified_graph:
                 self.logger.info(f"Materializing chunk of {len(self.unified_graph)} Unified Nodes to Database...")
-                await self.ingestor.ingest_nodes(self.unified_graph)
+                # Contract Alignment: Uses the unified process_payloads gateway
+                await self.ingestor.process_payloads("HybridBridge", self.unified_graph)
             else:
                 self.logger.warning("Hybrid Convergence yielded 0 nodes. Database materialization skipped.")
                 
@@ -211,7 +192,7 @@ class CloudscapeOrchestrator:
         self.forensics["Phase_3_Convergence"] = time.perf_counter() - p3_start
 
         # ----------------------------------------------------------------------
-        # PHASE 4: GLOBAL INTELLIGENCE ENRICHMENT (POLYMORPHIC)
+        # PHASE 4: GLOBAL INTELLIGENCE ENRICHMENT (PHYSICALLY ALIGNED)
         # ----------------------------------------------------------------------
         self.logger.info("Commencing Global Intelligence Enrichment & Graph Traversal...")
         p4_start = time.perf_counter()
@@ -219,25 +200,22 @@ class CloudscapeOrchestrator:
         try:
             # 4a. Cross-Cloud Identity Fabric
             self.logger.info("Igniting Cross-Cloud Identity Traversal Matrix...")
-            fabric_methods = ['map_trust_relationships', 'build_fabric', 'analyze', 'execute', 'run']
-            fabric_target = next((m for m in fabric_methods if hasattr(self.identity_fabric, m)), None)
+            self.trust_edges = self.identity_fabric.calculate_cross_cloud_trusts(self.unified_graph)
             
-            if fabric_target:
-                func = getattr(self.identity_fabric, fabric_target)
-                self.trust_edges = await func() if asyncio.iscoroutinefunction(func) else func()
-                
-                if self.trust_edges:
-                    self.logger.info(f"Materializing {len(self.trust_edges)} Cross-Cloud Identity Bridges...")
-                    await self.ingestor.ingest_edges(self.trust_edges)
+            if self.trust_edges:
+                self.logger.info(f"Materializing {len(self.trust_edges)} Cross-Cloud Identity Bridges...")
+                await self.ingestor.process_payloads("IdentityFabric", self.trust_edges)
             
             # 4b. Heuristic Attack Path Discovery
             self.logger.info("Initializing NetworkX Directed Topological Graph...")
-            path_methods = ['find_critical_paths', 'analyze_paths', 'analyze', 'execute', 'run']
-            path_target = next((m for m in path_methods if hasattr(self.attack_path_engine, m)), None)
+            self.path_results = self.attack_path_engine.calculate_attack_paths(
+                unified_graph=self.unified_graph, 
+                identity_edges=self.trust_edges
+            )
             
-            if path_target:
-                func = getattr(self.attack_path_engine, path_target)
-                self.path_results = await func() if asyncio.iscoroutinefunction(func) else func()
+            if self.path_results:
+                self.logger.info(f"Materializing {len(self.path_results)} Critical Attack Paths...")
+                await self.ingestor.process_payloads("AttackPathEngine", self.path_results)
             
         except Exception as e:
             self.logger.error(f"Phase 4 Intelligence Traversal Failed: {e}")

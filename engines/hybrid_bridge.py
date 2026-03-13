@@ -1,233 +1,289 @@
-import copy
 import logging
 import traceback
-import uuid
-import itertools
-from typing import Any, Dict, List, Generator, Iterable
-from collections.abc import Mapping
+import copy
+import random
+import hashlib
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Tuple
+from collections import defaultdict
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 TITAN - HYBRID DATA BRIDGE
+# CLOUDSCAPE NEXUS 5.0 TITAN - HYBRID BRIDGE ENGINE
 # ==============================================================================
-# The master convergence point for the Aether Engine.
-# Safely merges dynamic Live API streams with Synthetic State Factory streams.
-# Upgraded for Titan: Implements Iterative Flattening, Recursive Deep Merging,
-# O(1) Collision Mapping, and True Iterator Chunking for absolute OOM immunity.
+# The Enterprise Convergence Matrix.
+# Intelligently fuses live infrastructure telemetry with synthetic APT threat 
+# vectors using deterministic (ARN) and heuristic (Topological Signature) algorithms.
+# 
+# Features:
+# - O(1) Multi-dimensional Topological Indexing
+# - Deep Heuristic Dictionary Merging (Tags & Metadata)
+# - Synergistic Risk Compounding Mathematics
+# - Cryptographic State Overlay Tracking
 # ==============================================================================
 
 class HybridBridge:
     def __init__(self):
         self.logger = logging.getLogger("Cloudscape.Engines.HybridBridge")
-        self.DEFAULT_CHUNK_SIZE = 500
+        
+        # Performance and state tracking matrix
+        self.diagnostics = {
+            "live_base_nodes": 0,
+            "pure_synthetic_nodes": 0,
+            "heuristic_overlays": 0,
+            "deterministic_overlays": 0,
+            "failed_merges": 0,
+            "total_unified": 0
+        }
 
-    # ==========================================================================
-    # DATA SANITIZATION & MEMORY DEFENSE
-    # ==========================================================================
-
-    def _flatten_payloads(self, raw_stream: Any) -> List[Dict[str, Any]]:
+    def merge_payload_streams(self, live_stream: List[Dict[str, Any]], synthetic_stream: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Iterative stack-based flattener.
-        Replaces recursion to prevent RecursionError on massive, deeply nested 
-        asyncio.gather pagination responses from enterprise cloud accounts.
-        """
-        flat_list = []
-        stack = [raw_stream]
-
-        while stack:
-            current = stack.pop()
-            if not current:
-                continue
-            
-            if isinstance(current, dict):
-                flat_list.append(current)
-            elif isinstance(current, (list, tuple, set)):
-                # Extend the stack with the contents (reversed to maintain original order)
-                stack.extend(reversed(list(current)))
-            elif isinstance(current, Exception):
-                # Silently drop suppressed exceptions from isolated engine faults
-                pass
-            else:
-                self.logger.debug(f"HybridBridge dropped unmergable object of type: {type(current)}")
-                
-        return flat_list
-
-    def _ensure_dict(self, data: Any, fallback_key: str = "_raw") -> Dict[str, Any]:
-        """
-        The strict type-caster. 
-        Forces rogue lists (like empty tag arrays returned by dirty APIs) or strings 
-        into valid dictionaries to prevent TypeError mapping cascades downstream.
-        """
-        if isinstance(data, dict):
-            return data
-        elif not data:  # Catches None, [], "", etc.
-            return {}
-        else:
-            return {fallback_key: str(data)}
-
-    def _deep_merge_dicts(self, base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Recursive overlay matrix.
-        Ensures that when Synthetic data is injected into Live data, nested dictionaries
-        (like deep Azure metadata properties) are merged rather than overwritten.
-        """
-        merged = copy.deepcopy(base)
-        for key, value in update.items():
-            if isinstance(value, Mapping):
-                merged[key] = self._deep_merge_dicts(merged.get(key, {}), value)
-            else:
-                merged[key] = copy.deepcopy(value)
-        return merged
-
-    # ==========================================================================
-    # MASTER CONVERGENCE & STREAMING LOGIC
-    # ==========================================================================
-
-    def merge_payload_streams(self, live_stream: Any, synthetic_stream: Any) -> List[Dict[str, Any]]:
-        """
-        Standard convergence logic. Retained for backwards compatibility with 
-        smaller mock environments and synchronous unit testing.
-        """
-        return list(itertools.chain.from_iterable(self.stream_unified_graph(live_stream, synthetic_stream, chunk_size=0)))
-
-    def stream_unified_graph(self, live_stream: Any, synthetic_stream: Any, chunk_size: int = 500) -> Generator[List[Dict[str, Any]], None, None]:
-        """
-        The Titan Streaming Engine.
-        Merges Live and Synthetic realities in memory, resolves ARN collisions in O(1) time,
-        and yields the unified graph using itertools.chain to prevent memory duplication.
+        The Master Convergence Protocol.
+        Fuses the raw infrastructure scan with the simulated APT threat matrix,
+        ensuring absolute schema alignment before yielding the unified graph.
         """
         self.logger.info("Initializing Titan Hybrid Data Merge & Stream Sequence...")
         
+        # Deep copy to guarantee immutable isolation from the orchestrator's original arrays
         try:
-            # 1. Neutralize the List-of-Lists anomalies via iterative flattening
-            live_payloads = self._flatten_payloads(live_stream)
-            synth_payloads = self._flatten_payloads(synthetic_stream)
-            
-            # O(1) Collision Matrix mapped by Unique Cloud ARN
-            merged_registry: Dict[str, Dict[str, Any]] = {}
-            explicit_edges: List[Dict[str, Any]] = []
-            
-            # Analytical tracking
-            pure_synthetic_count = 0
-            merged_count = 0
-            live_count = 0
-
-            # ------------------------------------------------------------------
-            # PHASE 1: PROCESS LIVE DATA (PHYSICAL GROUND TRUTH)
-            # ------------------------------------------------------------------
-            for payload in live_payloads:
-                if payload.get("type") == "explicit_edge":
-                    explicit_edges.append(payload)
-                    continue
-
-                # Shallow copy root, deep copy mutable dicts
-                safe_payload = payload.copy()
-                tags = self._ensure_dict(safe_payload.get("tags")).copy()
-                metadata = self._ensure_dict(safe_payload.get("metadata", safe_payload.get("raw_data", {}))).copy()
-                
-                tags["DataOrigin"] = "LiveAPI"
-                safe_payload["tags"] = tags
-                
-                # URM-compliant ARN extraction
-                arn = safe_payload.get("arn") or metadata.get("arn") or safe_payload.get("id")
-                
-                if arn:
-                    if arn not in merged_registry:
-                        merged_registry[arn] = safe_payload
-                        live_count += 1
-                else:
-                    # Ephemeral ID generation prevents ID-collision across async threads
-                    ephemeral_id = f"ephemeral-live-{uuid.uuid4().hex[:8]}"
-                    self.logger.debug(f"Live payload missing definitive ARN. Assigned: {ephemeral_id}")
-                    safe_payload["arn"] = ephemeral_id
-                    merged_registry[ephemeral_id] = safe_payload
-                    live_count += 1
-
-            # ------------------------------------------------------------------
-            # PHASE 2: PROCESS SYNTHETIC DATA (AUGMENTATION & BACKFILL)
-            # ------------------------------------------------------------------
-            for payload in synth_payloads:
-                if payload.get("type") == "explicit_edge":
-                    explicit_edges.append(payload)
-                    continue
-                    
-                safe_payload = payload.copy()
-                arn = safe_payload.get("arn") or safe_payload.get("metadata", {}).get("arn") or safe_payload.get("id")
-                    
-                if not arn:
-                    continue
-                
-                # Defensively extract synthetic tags and risk metrics
-                synth_tags = self._ensure_dict(safe_payload.get("tags")).copy()
-                synth_metadata = self._ensure_dict(safe_payload.get("metadata", safe_payload.get("raw_data", {})))
-                
-                # URM schema agnostic risk extraction
-                synth_risk = float(safe_payload.get("risk_score", synth_metadata.get("baseline_risk_score", 0.0)))
-                    
-                if arn in merged_registry:
-                    # [THE HYBRID OVERLAY] - Node exists in Physical Reality AND Simulation
-                    live_node = merged_registry[arn]
-                    
-                    # 1. Deep merge tags and metadata to preserve physical truths
-                    live_node["tags"] = self._deep_merge_dicts(live_node.get("tags", {}), synth_tags)
-                    live_node["tags"]["DataOrigin"] = "Hybrid"
-                    live_node["tags"]["SyntheticAugmented"] = "True"
-                    
-                    # 2. Escalate Risk Score to the highest detected threat level mathematically
-                    live_risk = float(live_node.get("risk_score", 0.0))
-                    
-                    if synth_risk > live_risk:
-                        live_node["risk_score"] = synth_risk
-                        live_node["tags"]["InjectedVulnerability"] = "True"
-                        
-                    # 3. Apply merged structure back to registry
-                    merged_registry[arn] = live_node
-                    merged_count += 1
-                else:
-                    # [PURE SYNTHETIC] - The resource doesn't exist live, we force it into the graph
-                    synth_tags["DataOrigin"] = "Synthetic"
-                    safe_payload["tags"] = synth_tags
-                    # Ensure URM compliance for purely generated nodes
-                    if "risk_score" not in safe_payload:
-                        safe_payload["risk_score"] = synth_risk
-                    merged_registry[arn] = safe_payload
-                    pure_synthetic_count += 1
-
-            # ------------------------------------------------------------------
-            # PHASE 3: METRICS & TRUE GENERATOR YIELDING
-            # ------------------------------------------------------------------
-            total_nodes = len(merged_registry)
-            
-            self.logger.info(
-                f"Hybrid Merge Complete. Total Unified Nodes: {total_nodes} "
-                f"(Live Base: {live_count}, Pure Synthetic: {pure_synthetic_count}, Overlaid: {merged_count})"
-            )
-            
-            # Use itertools.chain to create a contiguous iterator without loading 
-            # a massive combined list of nodes + edges into memory.
-            all_elements_iterator = itertools.chain(merged_registry.values(), explicit_edges)
-            
-            if chunk_size <= 0:
-                # Fallback to pure list if chunking is disabled
-                yield list(all_elements_iterator)
-            else:
-                # Advanced iterable chunking algorithm
-                iterator = iter(all_elements_iterator)
-                for first in iterator:
-                    # Yields slices of the iterator exactly matching the chunk size
-                    chunk = list(itertools.chain([first], itertools.islice(iterator, chunk_size - 1)))
-                    yield chunk
-
+            live_nodes = copy.deepcopy(live_stream)
+            synth_nodes = copy.deepcopy(synthetic_stream)
         except Exception as e:
-            self.logger.critical(f"FATAL ERROR during Titan Hybrid Data Merge: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"Memory allocation fault during deepcopy: {e}")
+            return live_stream # Fallback to live data
+
+        # Pre-flight Isolation Barriers
+        if not synth_nodes:
+            self.logger.warning("Synthetic stream is empty. Yielding pure physical infrastructure graph.")
+            return live_nodes
             
-            # The Ultimate Failsafe: Yield whatever raw dictionaries we can salvage
-            safe_fallback = [p for p in self._flatten_payloads(live_stream) if isinstance(p, dict)]
-            if chunk_size <= 0:
-                yield safe_fallback
+        if not live_nodes:
+            self.logger.warning("Physical stream is empty. Yielding pure synthetic threat graph.")
+            return synth_nodes
+
+        try:
+            unified_graph = self._execute_heuristic_merge(live_nodes, synth_nodes)
+            
+            # Post-Merge Validation
+            valid_graph = self._validate_urm_compliance(unified_graph)
+            
+            self._render_telemetry_report()
+            return valid_graph
+            
+        except Exception as e:
+            self.logger.critical(f"Catastrophic Failure in Convergence Matrix: {e}")
+            self.logger.debug(traceback.format_exc())
+            self.logger.warning("Triggering Fail-Safe: Returning unmerged live stream to preserve pipeline integrity.")
+            return live_nodes
+
+    def _execute_heuristic_merge(self, live_nodes: List[Dict], synth_nodes: List[Dict]) -> List[Dict]:
+        """
+        Executes high-speed bindings to attach synthetic vulnerabilities to live nodes.
+        Utilizes a dual-pass approach: Deterministic ARN matching followed by Heuristic Signature matching.
+        """
+        unified_graph = []
+        pure_synthetic = []
+        
+        self.diagnostics["live_base_nodes"] = len(live_nodes)
+
+        # 1. Construct O(1) Master Indices for rapid querying
+        live_arn_index, live_signature_index = self._build_topological_indices(live_nodes)
+
+        # 2. Iterate Synthetic Stream and Apply Advanced Bindings
+        for synth in synth_nodes:
+            synth_arn = synth.get("arn")
+            
+            # Generate the Topological Signature for this synthetic node
+            sig = self._generate_topological_signature(synth)
+
+            # Attempt A: Deterministic Exact ARN Match (100% Confidence)
+            if synth_arn and synth_arn in live_arn_index:
+                self._overlay_node(live_arn_index[synth_arn], synth, confidence="DETERMINISTIC")
+                self.diagnostics["deterministic_overlays"] += 1
+                continue
+                
+            # Attempt B: Heuristic Signature Match (Fuzzy Topology Binding)
+            # If the synthetic node has a fabricated ARN but matches the cloud/service/type of a live node.
+            if sig in live_signature_index and len(live_signature_index[sig]) > 0:
+                # Randomly select a valid physical host within the same tenant/cloud/service boundary
+                target_arn = random.choice(live_signature_index[sig])
+                self._overlay_node(live_arn_index[target_arn], synth, confidence="HEURISTIC")
+                self.diagnostics["heuristic_overlays"] += 1
+                continue
+                
+            # Attempt C: No match found. Node is completely structural/pure synthetic (e.g., Azure Proxy VMs)
+            pure_synthetic.append(self._synthesize_orphan_node(synth))
+            self.diagnostics["pure_synthetic_nodes"] += 1
+
+        # 3. Assemble the Unified Graph
+        unified_graph.extend(list(live_arn_index.values()))
+        unified_graph.extend(pure_synthetic)
+        
+        self.diagnostics["total_unified"] = len(unified_graph)
+
+        return unified_graph
+
+    # ==========================================================================
+    # CORE INDEXING & SIGNATURE GENERATION
+    # ==========================================================================
+
+    def _build_topological_indices(self, live_nodes: List[Dict]) -> Tuple[Dict[str, Dict], Dict[Tuple, List[str]]]:
+        """
+        Constructs multi-dimensional hash maps for O(1) correlation speeds.
+        Returns: (ARN_Index, Signature_Index)
+        """
+        arn_index = {}
+        signature_index = defaultdict(list)
+        
+        for node in live_nodes:
+            arn = node.get("arn")
+            if not arn:
+                continue
+                
+            arn_index[arn] = node
+            
+            # Extract signature for fuzzy heuristic binding
+            sig = self._generate_topological_signature(node)
+            signature_index[sig].append(arn)
+            
+        self.logger.debug(f"Topological Indices compiled. Unique ARNs: {len(arn_index)} | Unique Signatures: {len(signature_index)}.")
+        return arn_index, signature_index
+
+    def _generate_topological_signature(self, node: Dict) -> Tuple[str, str, str, str]:
+        """
+        Creates a strict 4-dimensional tuple representing the node's physical place in the mesh.
+        Signature format: (TenantID, CloudProvider, Service, ResourceType)
+        """
+        return (
+            str(node.get("tenant_id", "unknown")).upper(),
+            str(node.get("cloud_provider", "unknown")).lower(),
+            str(node.get("service", "unknown")).lower(),
+            str(node.get("type", "unknown")).lower()
+        )
+
+    # ==========================================================================
+    # COMPOUND OVERLAY MATHEMATICS
+    # ==========================================================================
+
+    def _overlay_node(self, live_node: Dict, synth_node: Dict, confidence: str) -> None:
+        """
+        Dynamically compounds the properties of a synthetic threat onto a live physical node.
+        Applies deep dictionary merging and calculates non-linear risk synergy.
+        """
+        try:
+            # 1. Execute Synergistic Risk Mathematics
+            self._compound_risk_scores(live_node, synth_node)
+
+            # 2. Deep Merge Tags and Metadata
+            self._merge_tags_and_metadata(live_node, synth_node)
+
+            # 3. Inject Threat Artifacts & Cryptographic Proof
+            self._inject_threat_artifacts(live_node, synth_node, confidence)
+            
+            # 4. Flag the node as structurally compromised for downstream engines
+            live_node["metadata"]["is_simulated"] = True
+            live_node["metadata"]["hybrid_overlay_applied"] = True
+            
+        except Exception as e:
+            self.logger.error(f"Overlay mathematical fault on node {live_node.get('arn')}: {e}")
+            self.diagnostics["failed_merges"] += 1
+
+    def _compound_risk_scores(self, live_node: Dict, synth_node: Dict) -> None:
+        """
+        Calculates the new risk score. If a node is inherently risky and is hit with a
+        high-risk simulated APT, the resulting score receives a synergistic multiplier.
+        """
+        live_risk = float(live_node.get("metadata", {}).get("baseline_risk_score", 0.0))
+        synth_risk = float(synth_node.get("metadata", {}).get("baseline_risk_score", 0.0))
+        
+        # If both vectors are significant, apply a synergy penalty (+1.5), capped at 10.0
+        if live_risk >= 5.0 and synth_risk >= 5.0:
+            new_risk = min(10.0, max(live_risk, synth_risk) + 1.5)
+        else:
+            # Otherwise, the dominant risk takes over
+            new_risk = max(live_risk, synth_risk)
+            
+        live_node["metadata"]["baseline_risk_score"] = round(new_risk, 2)
+        live_node["metadata"]["original_live_risk"] = live_risk
+
+    def _merge_tags_and_metadata(self, live_node: Dict, synth_node: Dict) -> None:
+        """
+        Deep-merges tags to ensure the node is recognized by the AttackPathEngine 
+        as a 'Crown Jewel' if the synthetic node classifies it as such.
+        """
+        live_tags = live_node.get("tags", {})
+        synth_tags = synth_node.get("tags", {})
+        
+        for key, synth_val in synth_tags.items():
+            if key not in live_tags:
+                live_tags[key] = synth_val
             else:
-                iterator = iter(safe_fallback)
-                for first in iterator:
-                    yield list(itertools.chain([first], itertools.islice(iterator, chunk_size - 1)))
+                # Append string values to preserve both contexts (e.g. "Prod | PCI-DSS")
+                if isinstance(live_tags[key], str) and isinstance(synth_val, str) and synth_val not in live_tags[key]:
+                    live_tags[key] = f"{live_tags[key]} | {synth_val}"
+                    
+        live_node["tags"] = live_tags
+
+    def _inject_threat_artifacts(self, live_node: Dict, synth_node: Dict, confidence: str) -> None:
+        """
+        Transfers the specific vulnerability details from the synthetic node into 
+        a dedicated 'simulated_threats' array on the live node.
+        """
+        if "simulated_threats" not in live_node["metadata"]:
+            live_node["metadata"]["simulated_threats"] = []
+            
+        threat_artifact = {
+            k: v for k, v in synth_node.get("metadata", {}).items() 
+            if k not in ["arn", "resource_type", "baseline_risk_score", "last_seen", "is_simulated"]
+        }
+        
+        if threat_artifact:
+            # Create a cryptographic hash to track the exact payload applied
+            payload_str = f"{synth_node.get('arn')}-{datetime.now(timezone.utc).isoformat()}"
+            threat_hash = hashlib.sha256(payload_str.encode()).hexdigest()[:12]
+            
+            threat_artifact["threat_id_hash"] = threat_hash
+            threat_artifact["injected_from_synth_arn"] = synth_node.get("arn", "unknown")
+            threat_artifact["binding_confidence"] = confidence
+            
+            live_node["metadata"]["simulated_threats"].append(threat_artifact)
+
+    def _synthesize_orphan_node(self, synth_node: Dict) -> Dict:
+        """
+        Prepares a purely synthetic node (like a simulated Azure VM attacker) 
+        for ingestion when it has no physical live counterpart to bind to.
+        """
+        synth_node["metadata"]["hybrid_overlay_applied"] = False
+        synth_node["metadata"]["is_pure_synthetic"] = True
+        return synth_node
+
+    # ==========================================================================
+    # VALIDATION & TELEMETRY
+    # ==========================================================================
+
+    def _validate_urm_compliance(self, graph: List[Dict]) -> List[Dict]:
+        """
+        Final safety check before passing data to the Intelligence Fabric.
+        Ensures all nodes conform to the Universal Resource Model expectations.
+        """
+        valid_nodes = []
+        for node in graph:
+            if "arn" in node and "metadata" in node and "tags" in node:
+                valid_nodes.append(node)
+            else:
+                self.logger.warning(f"Dropping malformed node from convergence stream: {node.get('arn', 'UNKNOWN')}")
+                
+        return valid_nodes
+
+    def _render_telemetry_report(self) -> None:
+        """Outputs strict, comprehensive metrics for the Orchestrator log."""
+        self.logger.info(
+            f"Hybrid Merge Complete. Total Unified Nodes: {self.diagnostics['total_unified']} "
+            f"(Live Base: {self.diagnostics['live_base_nodes']}, "
+            f"Pure Synthetic: {self.diagnostics['pure_synthetic_nodes']}, "
+            f"Overlaid [Heuristic]: {self.diagnostics['heuristic_overlays']}, "
+            f"Overlaid [Deterministic]: {self.diagnostics['deterministic_overlays']})"
+        )
+
 
 # ==============================================================================
 # SINGLETON EXPORT (THE TITAN LINK)

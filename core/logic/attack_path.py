@@ -1,219 +1,259 @@
 import logging
-import traceback
-from typing import List, Dict, Any, Tuple, Set
+import uuid
 import networkx as nx
+from typing import List, Dict, Any, Tuple
 
 # ==============================================================================
 # CLOUDSCAPE NEXUS 5.0 TITAN - HEURISTIC ATTACK PATH DISCOVERY (HAPD)
 # ==============================================================================
-# The "Brain" of the Nexus Intelligence Tier.
-# Transforms flat cloud nodes into a Directed Mathematical Topology. 
-# Calculates physically viable exfiltration routes by evaluating network 
-# boundaries, identity bridges, and public exposure tags using Graph Theory.
+# The Exhaustive Intelligence Analyzer.
+# Re-engineered for Titan: Identifies ALL potential exfiltration routes, 
+# infers implicit structural network bridges, and dynamically classifies path 
+# severity using the Heuristic Composite Score (HCS) algorithm.
 # ==============================================================================
 
 class AttackPathEngine:
     def __init__(self):
         self.logger = logging.getLogger("Cloudscape.Logic.AttackPath")
-        self.max_path_depth = 5  # Prevent infinite combinatorial explosions in massive environments
-
-    # --------------------------------------------------------------------------
-    # HEURISTIC CLASSIFICATION
-    # --------------------------------------------------------------------------
-
-    def _classify_nodes(self, nodes: List[Dict[str, Any]]) -> Tuple[Set[str], Set[str]]:
-        """
-        Scans the Unified Resource Model (URM) to designate Attack Vectors.
-        Returns a tuple of (Entry_Point_ARNs, Crown_Jewel_ARNs).
-        """
-        entry_points = set()
-        crown_jewels = set()
-
-        for node in nodes:
-            arn = node.get("arn")
-            if not arn:
-                continue
-
-            tags = node.get("tags", {})
-            risk_score = float(node.get("risk_score", 0.0))
-
-            # 1. Identify Entry Points (Public Exposure)
-            is_exposed = any(
-                val for key, val in tags.items() 
-                if key.lower() == 'exposure' and 'public' in str(val).lower()
-            ) or tags.get("Exposure") in ["CriticalPortOpen", "PublicAccessBlockMissing"]
-            
-            if is_exposed or (node.get("type", "").lower() in ["instance", "virtualmachine"] and risk_score >= 0.7):
-                entry_points.add(arn)
-
-            # 2. Identify Crown Jewels (Restricted Data / High Value)
-            is_restricted = any(
-                val for key, val in tags.items()
-                if key.lower() == 'dataclassification' and 'restricted' in str(val).lower()
-            ) or tags.get("Infrastructure") == "StateFile"
-
-            if is_restricted or (node.get("type", "").lower() in ["bucket", "storageblob", "dbinstance"] and risk_score >= 0.7):
-                crown_jewels.add(arn)
-
-        self.logger.debug(f"Heuristics Classified {len(entry_points)} Entry Points and {len(crown_jewels)} Crown Jewels.")
-        return entry_points, crown_jewels
-
-    # --------------------------------------------------------------------------
-    # TOPOLOGY RECONSTRUCTION (THE REALITY CHECK)
-    # --------------------------------------------------------------------------
-
-    def _build_topology_edges(self, nodes: List[Dict[str, Any]]) -> List[Tuple[str, str, Dict[str, Any]]]:
-        """
-        The Hallucination Cure.
-        Reconstructs physical network boundaries (VPC -> Subnet -> Compute) 
-        so the graph algorithm respects actual cloud containment zones.
-        """
-        edges = []
-        subnet_to_vpc = {}
-        compute_to_subnet = {}
-
-        for node in nodes:
-            arn = node.get("arn")
-            raw_data = node.get("raw_data", {})
-            node_type = node.get("type", "").lower()
-
-            # AWS Topologies
-            if node_type == "subnet":
-                vpc_id = raw_data.get("VpcId")
-                if vpc_id:
-                    # We create an edge FROM VPC TO Subnet
-                    edges.append((f"arn:aws:ec2:*:*:vpc/{vpc_id}", arn, {"relation": "CONTAINS", "weight": 1.0}))
-            elif node_type == "instance":
-                subnet_id = raw_data.get("SubnetId")
-                if subnet_id:
-                    edges.append((f"arn:aws:ec2:*:*:subnet/{subnet_id}", arn, {"relation": "HOSTS", "weight": 1.0}))
-            elif node_type == "dbinstance":
-                subnets = raw_data.get("DBSubnetGroup", {}).get("Subnets", [])
-                for sub in subnets:
-                    sub_id = sub.get("SubnetIdentifier")
-                    if sub_id:
-                        edges.append((f"arn:aws:ec2:*:*:subnet/{sub_id}", arn, {"relation": "HOSTS", "weight": 1.0}))
-
-            # Azure Topologies
-            elif node_type == "virtualnetwork":
-                for sub in raw_data.get("subnets", []):
-                    sub_arn = sub.get("id")
-                    if sub_arn:
-                        edges.append((arn, sub_arn, {"relation": "CONTAINS", "weight": 1.0}))
-            elif node_type == "virtualmachine":
-                # Extrapolate Azure Subnet from Network Interfaces if available
-                nics = raw_data.get("network_profile", {}).get("network_interfaces", [])
-                for nic in nics:
-                    nic_id = nic.get("id", "")
-                    if nic_id:
-                        # Draw soft topological edge
-                        edges.append((nic_id, arn, {"relation": "ATTACHED_TO", "weight": 1.0}))
-
-        return edges
-
-    # --------------------------------------------------------------------------
-    # ATTACK PATH EXECUTION MATRIX
-    # --------------------------------------------------------------------------
+        self.max_search_depth = 6  # Maximum lateral movement hops an attacker would realistically take
+        
+        # HCS (Heuristic Composite Score) Thresholds
+        self.TIER_CRITICAL = 0.85
+        self.TIER_HIGH = 0.65
+        self.TIER_MEDIUM = 0.40
 
     def calculate_attack_paths(self, unified_graph: List[Dict[str, Any]], identity_edges: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Ingests the Unified Graph and Identity Fabric bridges.
-        Builds a Directed Graph (DiGraph) and runs bounded Simple Path searches
-        to discover viable exfiltration routes without hallucinating impossible jumps.
+        The Master Pathfinder Loop.
+        Constructs a NetworkX Directed Graph, infers missing structural connections,
+        and executes exhaustive all-paths analysis.
         """
-        if not unified_graph:
-            return []
-
         self.logger.info("Initializing NetworkX Directed Topological Graph...")
+        
         G = nx.DiGraph()
-
-        try:
-            # 1. Load Physical Nodes
-            for node in unified_graph:
-                arn = node.get("arn")
-                if arn:
-                    G.add_node(arn, type=node.get("type"), risk=node.get("risk_score", 0.0))
-
-            # 2. Load Identity Edges (Logical Bridges from Identity Fabric)
-            for edge in identity_edges:
-                src = edge.get("source_arn")
-                tgt = edge.get("target_arn")
-                if src and tgt:
-                    # Identity edges are highly viable paths (weight 0.5)
-                    G.add_edge(src, tgt, relation=edge.get("relation_type"), weight=0.5)
-
-            # 3. Load Physical Topology Edges (Network Boundaries)
-            topo_edges = self._build_topology_edges(unified_graph)
-            for src, tgt, attrs in topo_edges:
-                # To allow reverse traversal (e.g. Instance accessing a Role via its Subnet boundary)
-                # we add bidirectional soft edges with higher friction (weight 2.0)
-                G.add_edge(src, tgt, **attrs)
-                G.add_edge(tgt, src, relation=f"IN_{attrs['relation']}", weight=2.0)
-
-            # 4. Resolve Entry and Target Vectors
-            entry_points, crown_jewels = self._classify_nodes(unified_graph)
-
-            # Filter valid nodes that actually exist in the constructed graph
-            valid_entries = [n for n in entry_points if n in G]
-            valid_targets = [n for n in crown_jewels if n in G]
-
-            if not valid_entries or not valid_targets:
-                self.logger.info("HAPD Scan completed: No complete vectors found between Entry Points and Crown Jewels.")
-                return []
-
-            # 5. Pathfinding Execution
-            self.logger.info(f"Graph constructed: {G.number_of_nodes()} Nodes, {G.number_of_edges()} Edges.")
-            self.logger.info(f"Executing Bounded Path Search (Max Depth: {self.max_path_depth}) across {len(valid_entries)} Entries to {len(valid_targets)} Targets...")
+        
+        # 1. Materialize Nodes into NetworkX
+        valid_nodes = [n for n in unified_graph if n.get("type") != "explicit_edge" and n.get("arn")]
+        for node in valid_nodes:
+            arn = node["arn"]
+            G.add_node(
+                arn, 
+                risk_score=float(node.get("risk_score", 0.0)),
+                tags=node.get("tags", {}),
+                resource_type=str(node.get("type", "")).lower(),
+                service=str(node.get("service", "")).lower(),
+                cloud=str(node.get("cloud_provider", "")).lower(),
+                name=node.get("name", "Unknown")
+            )
             
-            attack_path_payloads = []
-            
-            for source in valid_entries:
-                for target in valid_targets:
-                    if source == target:
-                        continue
-                        
-                    try:
-                        # Calculate all physically viable paths up to the max hop depth
-                        paths = list(nx.all_simple_paths(G, source=source, target=target, cutoff=self.max_path_depth))
-                        
-                        for path in paths:
-                            # Generate an explicit neo4j edge for each exact path discovered
-                            path_id = " -> ".join(path)
-                            payload = {
-                                "type": "explicit_edge",
-                                "relation_type": "ATTACK_PATH",
-                                "source_arn": source,
-                                "target_arn": target,
-                                "metadata": {
-                                    "hop_count": len(path) - 1,
-                                    "path_sequence": path_id,
-                                    "severity": "CRITICAL",
-                                    "discovery_engine": "NetworkX_HAPD",
-                                    # Base attack weight calculated by hop count (shorter is more critical)
-                                    "weight": round(1.0 / len(path), 3)
-                                }
-                            }
-                            attack_path_payloads.append(payload)
-                            
-                    except nx.NetworkXNoPath:
-                        continue
-                    except Exception as e:
-                        self.logger.debug(f"Path computation failed between {source} and {target}: {e}")
+        self.logger.debug(f"HAPD Graph seeded with {G.number_of_nodes()} physical/synthetic nodes.")
 
-            # Return the deduplicated and verified attack edges
-            # (Limiting return size to prevent downstream database OOM if graph is completely flat)
-            MAX_PATHS = 5000
-            if len(attack_path_payloads) > MAX_PATHS:
-                self.logger.warning(f"Extremely high path density detected ({len(attack_path_payloads)}). Truncating to top {MAX_PATHS} to preserve database stability.")
-                attack_path_payloads = sorted(attack_path_payloads, key=lambda x: x["metadata"]["weight"], reverse=True)[:MAX_PATHS]
+        # 2. Materialize Explicit Identity Fabric Edges
+        edge_count = 0
+        for edge in identity_edges:
+            src = edge.get("source_arn")
+            tgt = edge.get("target_arn")
+            if src and tgt and G.has_node(src) and G.has_node(tgt):
+                G.add_edge(
+                    src, tgt, 
+                    weight=float(edge.get("weight", 1.0)),
+                    relation=edge.get("relation_type", "CROSS_CLOUD_TRUST"),
+                    is_identity_bridge=True
+                )
+                edge_count += 1
+                
+        # 3. Infer Implicit Structural Edges (Network Lateral Movement)
+        inferred_count = self._infer_structural_edges(G, valid_nodes)
+        self.logger.info(f"Graph topology constructed: {G.number_of_nodes()} Nodes, {edge_count} Identity Edges, {inferred_count} Inferred Structural Edges.")
 
-            self.logger.info(f"Attack Path Analysis complete. Generated {len(attack_path_payloads)} verified exfiltration routes.")
-            return attack_path_payloads
+        # 4. Identify Entry Points and Crown Jewels
+        entry_points, crown_jewels = self._designate_strategic_targets(G)
+        self.logger.info(f"HAPD Target Matrix: {len(entry_points)} Public Entry Points ➔ {len(crown_jewels)} Crown Jewels.")
 
-        except Exception as e:
-            self.logger.error(f"Catastrophic failure in NetworkX Topology Engine: {e}")
-            self.logger.debug(traceback.format_exc())
+        if not entry_points or not crown_jewels:
+            self.logger.warning("Graph lacks either Entry Points or Crown Jewels. Pathfinding terminated.")
             return []
+
+        # 5. Exhaustive Path Discovery & Dynamic Scoring
+        return self._execute_exhaustive_discovery(G, entry_points, crown_jewels)
+
+    # ==========================================================================
+    # STRUCTURAL INFERENCE ENGINE
+    # ==========================================================================
+
+    def _infer_structural_edges(self, G: nx.DiGraph, nodes: List[Dict[str, Any]]) -> int:
+        """
+        Zero-Knowledge Linker.
+        Analyzes metadata to connect floating infrastructure logically. 
+        Crucial for Mock environments where physical routing tables are absent.
+        """
+        inferred_edges = 0
+        
+        # Group nodes by cloud provider for logical network boundary simulation
+        aws_compute = []
+        aws_data = []
+        azure_compute = []
+        azure_data = []
+        
+        for node in nodes:
+            arn = node["arn"]
+            service = str(node.get("service", "")).lower()
+            res_type = str(node.get("type", "")).lower()
+            cloud = str(node.get("cloud_provider", "")).lower()
+            
+            if cloud == "aws":
+                if service in ["ec2", "lambda", "ecs"]: aws_compute.append(arn)
+                elif service in ["rds", "s3", "dynamodb"]: aws_data.append(arn)
+            elif cloud == "azure":
+                if service in ["compute", "virtualmachine"]: azure_compute.append(arn)
+                elif service in ["storage", "cosmosdb", "sql"]: azure_data.append(arn)
+
+        # Simulate Internal Network Lateral Movement: Compute ➔ Data within the same cloud
+        for compute_arn in aws_compute:
+            for data_arn in aws_data:
+                if not G.has_edge(compute_arn, data_arn):
+                    G.add_edge(compute_arn, data_arn, weight=2.0, relation="CAN_REACH_NETWORK", is_identity_bridge=False)
+                    inferred_edges += 1
+                    
+        for compute_arn in azure_compute:
+            for data_arn in azure_data:
+                if not G.has_edge(compute_arn, data_arn):
+                    G.add_edge(compute_arn, data_arn, weight=2.0, relation="CAN_REACH_NETWORK", is_identity_bridge=False)
+                    inferred_edges += 1
+
+        return inferred_edges
+
+    # ==========================================================================
+    # STRATEGIC TARGET IDENTIFICATION
+    # ==========================================================================
+
+    def _designate_strategic_targets(self, G: nx.DiGraph) -> Tuple[List[str], List[str]]:
+        """Scans graph attributes to dynamically flag Initial Access vs Data Exfiltration nodes."""
+        entry_points = []
+        crown_jewels = []
+        
+        for node_id, data in G.nodes(data=True):
+            tags = data.get("tags", {})
+            res_type = data.get("resource_type", "")
+            risk = data.get("risk_score", 0.0)
+            
+            # Identify Initial Access Vectors
+            if str(tags.get("Exposure", "")).lower() == "public" or risk >= 8.5:
+                # Prioritize Compute/Storage that is public
+                if res_type in ["instance", "virtualmachine", "bucket", "storageaccount"]:
+                    entry_points.append(node_id)
+            
+            # Identify Crown Jewels (High-Value Targets)
+            if str(tags.get("DataClass", "")) in ["PCI-DSS", "PII", "PHI"] or res_type in ["dbinstance", "databaseaccount", "sqlserver"]:
+                crown_jewels.append(node_id)
+            elif "admin" in str(data.get("name", "")).lower() and risk >= 9.0:
+                crown_jewels.append(node_id) # Shadow Admins are also crown jewels
+                
+        # Deduplicate sets
+        return list(set(entry_points)), list(set(crown_jewels))
+
+    # ==========================================================================
+    # EXHAUSTIVE DISCOVERY & HEURISTIC COMPOSITE SCORING (HCS)
+    # ==========================================================================
+
+    def _execute_exhaustive_discovery(self, G: nx.DiGraph, entry_points: List[str], crown_jewels: List[str]) -> List[Dict[str, Any]]:
+        """
+        Executes nx.all_simple_paths. Extracts every route, applies the HCS algorithm, 
+        classifies the threat tier, and returns formatted Universal Path Models.
+        """
+        self.logger.info(f"Executing Exhaustive Path Search (Max Depth: {self.max_search_depth})...")
+        verified_paths = []
+        
+        for source in entry_points:
+            for target in crown_jewels:
+                if source == target:
+                    continue
+                
+                try:
+                    # Unearth EVERY possible route between the Entry Point and the Crown Jewel
+                    path_generator = nx.all_simple_paths(G, source=source, target=target, cutoff=self.max_search_depth)
+                    
+                    for raw_path in path_generator:
+                        formatted_path = self._score_and_classify_path(G, raw_path)
+                        verified_paths.append(formatted_path)
+                        
+                except nx.NetworkXNoPath:
+                    continue
+                except Exception as e:
+                    self.logger.debug(f"Pathfinding anomaly between {source} and {target}: {e}")
+
+        # Sort paths by HCS Severity (Highest risk first)
+        verified_paths.sort(key=lambda x: x["metadata"]["hcs_score"], reverse=True)
+        self.logger.info(f"Exhaustive Analysis Complete. Generated {len(verified_paths)} dynamically classified attack paths.")
+        return verified_paths
+
+    def _score_and_classify_path(self, G: nx.DiGraph, path_nodes: List[str]) -> Dict[str, Any]:
+        """
+        The HCS (Heuristic Composite Score) Algorithm.
+        Calculates severity dynamically based on node risk, identity bridges, and path friction.
+        """
+        total_node_risk = 0.0
+        identity_bridges_crossed = 0
+        path_edges = []
+        
+        # 1. Analyze Nodes
+        for idx, node_arn in enumerate(path_nodes):
+            node_data = G.nodes[node_arn]
+            # Normalize risk from 0-10 scale down to 0.0-1.0 scale for HCS math
+            normalized_risk = node_data.get("risk_score", 0.0) / 10.0 if node_data.get("risk_score", 0.0) > 1.0 else node_data.get("risk_score", 0.0)
+            total_node_risk += normalized_risk
+            
+            # Analyze Edges
+            if idx < len(path_nodes) - 1:
+                next_node = path_nodes[idx + 1]
+                edge_data = G.get_edge_data(node_arn, next_node)
+                
+                if edge_data.get("is_identity_bridge"):
+                    identity_bridges_crossed += 1
+                    
+                path_edges.append({
+                    "source": node_arn,
+                    "target": next_node,
+                    "relation": edge_data.get("relation", "TRANSITS")
+                })
+
+        # 2. HCS Mathematical Formulation
+        base_hcs = total_node_risk / len(path_nodes)  # Average node vulnerability
+        
+        # Identity Bridge Multiplier: Crossing clouds/accounts is highly dangerous
+        bridge_multiplier = 1.0 + (0.25 * identity_bridges_crossed) 
+        
+        # Friction Decay: Longer paths are harder for attackers to execute successfully
+        friction_decay = (len(path_nodes) - 2) * 0.05 
+        
+        raw_hcs = (base_hcs * bridge_multiplier) - friction_decay
+        final_hcs = max(0.01, min(raw_hcs, 1.0)) # Clamp between 0.01 and 1.0
+        
+        # 3. Dynamic Tier Classification
+        if final_hcs >= self.TIER_CRITICAL:
+            tier = "CRITICAL"
+        elif final_hcs >= self.TIER_HIGH:
+            tier = "HIGH"
+        elif final_hcs >= self.TIER_MEDIUM:
+            tier = "MEDIUM"
+        else:
+            tier = "LOW"
+
+        # 4. Format payload for Graph Ingestor
+        return {
+            "type": "attack_path",
+            "path_id": f"path-{uuid.uuid4().hex[:12]}",
+            "source_node": path_nodes[0],
+            "target_node": path_nodes[-1],
+            "tier": tier,
+            "metadata": {
+                "hcs_score": round(final_hcs, 3),
+                "hop_count": len(path_nodes) - 1,
+                "cross_cloud_bridges": identity_bridges_crossed,
+                "node_sequence": path_nodes,
+                "edge_sequence": path_edges
+            }
+        }
 
 # ==============================================================================
 # SINGLETON EXPORT

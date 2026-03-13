@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 # ==============================================================================
 # SPLIT-PLANE DEPENDENCY INJECTION
 # Isolates the Data Plane (Storage) from the Control Plane (ARM Management).
-# Prevents total engine failure in MOCK mode if ARM SDKs are corrupted.
+# Prevents total engine failure in MOCK mode if ARM SDKs are corrupted or missing.
 # ==============================================================================
 
 # 1. Data Plane SDKs (Required for MOCK / Azurite)
@@ -15,6 +15,7 @@ try:
     from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 except ImportError:
     BlobServiceClient = None
+    HttpResponseError = ResourceNotFoundError = Exception
 
 # 2. Control Plane SDKs (Required for PROPER / ARM)
 try:
@@ -26,6 +27,7 @@ try:
 except ImportError:
     DefaultAzureCredential = None
     ResourceManagementClient = ComputeManagementClient = NetworkManagementClient = None
+    ClientAuthenticationError = Exception
 
 from engines.base_engine import BaseDiscoveryEngine
 from core.config import config, TenantConfig
@@ -34,8 +36,13 @@ from core.config import config, TenantConfig
 # CLOUDSCAPE NEXUS 5.0 - ENTERPRISE AZURE DISCOVERY ENGINE (TITAN FULL)
 # ==============================================================================
 # Dual-Mode extraction engine. Natively routes to Azurite in MOCK mode or 
-# Global ARM endpoints in PROPER mode. Implements deterministic async consumption, 
-# Tenant Isolation Filtering, vulnerability heuristics, and state hashing.
+# Global ARM endpoints in PROPER mode. 
+#
+# Features:
+# - Asynchronous Scatter-Gather Blob Extraction
+# - Granular Fault Isolation (Blast Radius Containment)
+# - IdentityFabric-ready Managed Identity Extraction
+# - Tenant Isolation Filtering
 # ==============================================================================
 
 class AzureEngine(BaseDiscoveryEngine):
@@ -47,6 +54,9 @@ class AzureEngine(BaseDiscoveryEngine):
         self.conn_params = self.get_azure_connection_parameters()
         self.is_mock = self.conn_params.get("is_mock", False)
         self.credential = None
+        
+        # Concurrency limit to prevent DDOSing the local Azurite emulator
+        self._azurite_semaphore = asyncio.Semaphore(10)
 
     # --------------------------------------------------------------------------
     # ISOLATION & GATEWAY MECHANISMS
@@ -59,7 +69,7 @@ class AzureEngine(BaseDiscoveryEngine):
         Shields the graph from stale emulator state and cross-tenant contamination.
         """
         if not self.is_mock:
-            # In proper mode, Subscription RBAC inherently provides isolation
+            # In PROPER mode, Subscription RBAC inherently provides physical isolation
             return True
             
         # 1. Check Metadata (Azure metadata dictionaries are usually flat string:string)
@@ -113,7 +123,7 @@ class AzureEngine(BaseDiscoveryEngine):
                 if not self.tenant.credentials.azure_subscription_id:
                     self.logger.info("No explicit Subscription ID provided. Resolving via ARM...")
                     sub_client = ResourceManagementClient(credential=self.credential, subscription_id="00000000-0000-0000-0000-000000000000")
-                    subs = await asyncio.to_thread(list, sub_client.subscriptions.list())
+                    subs = await self.execute_with_backoff(asyncio.to_thread, list, sub_client.subscriptions.list())
                     if subs:
                         self.tenant.credentials.azure_subscription_id = subs[0].subscription_id
                         self.logger.info(f"Target Azure Subscription Resolved: {self.tenant.credentials.azure_subscription_id}")
@@ -134,6 +144,7 @@ class AzureEngine(BaseDiscoveryEngine):
             return False
         except Exception as e:
             self.logger.error(f"Azure Connectivity Failed. Pipeline halted for this tenant: {e}")
+            self.logger.debug(traceback.format_exc())
             return False
 
     # --------------------------------------------------------------------------
@@ -181,7 +192,7 @@ class AzureEngine(BaseDiscoveryEngine):
                 if "network_security_group" in reg:
                     tasks.append(self._extract_network_security_groups(sub_id, reg["network_security_group"].get("baseline_risk_score", 0.2)))
 
-        # Parallel Execution Matrix
+        # Parallel Execution Matrix with Blast Radius Isolation
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for result in results:
@@ -201,7 +212,7 @@ class AzureEngine(BaseDiscoveryEngine):
     async def _extract_azurite_storage(self, container_risk: float, blob_risk: float) -> List[Dict]:
         """
         Recursively traverses Azurite to extract Storage Containers and physical Blobs.
-        Implements Deterministic Async Consumption to prevent silent iterator exhaustion.
+        Utilizes bounded parallel fan-out for Blob extraction to massively reduce I/O latency.
         """
         payloads = []
         conn_str = self.conn_params.get("connection_string")
@@ -217,10 +228,13 @@ class AzureEngine(BaseDiscoveryEngine):
                 async for c in container_iter:
                     containers.append(c)
                 
+                blob_tasks = []
+
                 for container in containers:
                     c_name = container.name
                     c_metadata = container.metadata or {}
                     
+                    # Shield against cross-tenant contamination
                     is_owner = await self._verify_tenant_ownership(c_name, c_metadata)
                     if not is_owner:
                         continue
@@ -243,57 +257,77 @@ class AzureEngine(BaseDiscoveryEngine):
                         payload["cloud_provider"] = "azure"
                         payloads.append(payload)
                         
-                    # 2. Deterministic Extraction of Blobs within the Container
-                    container_client = blob_service_client.get_container_client(c_name)
-                    blob_iter = container_client.list_blobs(include=['metadata'])
-                    blobs = []
-                    async for b in blob_iter:
-                        blobs.append(b)
-                    
-                    for blob in blobs:
-                        b_name = blob.name
-                        b_arn = f"{c_arn}/blobs/{b_name}"
-                        b_metadata = blob.metadata or {}
-                        
-                        b_tags = []
-                        b_risk = blob_risk
-                        
-                        # Blob Payload Heuristics
-                        if "pci" in b_name.lower() or "billing" in b_name.lower():
-                            b_tags.append({"Key": "DataClassification", "Value": "Restricted"})
-                            b_risk += 0.4
-                        if "tfstate" in b_name.lower():
-                            b_tags.append({"Key": "Infrastructure", "Value": "StateFile"})
-                            b_risk += 0.4
-                            
-                        b_data = {
-                            "Name": b_name, 
-                            "Tags": b_tags, 
-                            "Metadata": b_metadata,
-                            "Size": blob.size,
-                            "ContentType": blob.content_settings.content_type if blob.content_settings else "unknown"
-                        }
-                        
-                        b_has_changed, b_state_hash = await self.check_state_differential(b_arn, b_data)
-                        if b_has_changed:
-                            b_data["_state_hash"] = b_state_hash
-                            b_payload = self.format_urm_payload("storage", "StorageBlob", b_arn, b_data, min(b_risk, 1.0))
-                            b_payload["cloud_provider"] = "azure"
-                            payloads.append(b_payload)
+                    # Push blob extraction into a bounded concurrent worker
+                    blob_tasks.append(self._async_blob_extractor(
+                        blob_service_client, c_name, c_arn, blob_risk
+                    ))
+
+                # Wait for all blob extractions across all containers to finish in parallel
+                blob_results = await asyncio.gather(*blob_tasks, return_exceptions=True)
+                for res in blob_results:
+                    if isinstance(res, list):
+                        payloads.extend(res)
 
             return payloads
             
         except Exception as e:
             self.logger.error(f"Azure Azurite Storage extraction failed: {e}")
             self.logger.debug(traceback.format_exc())
-            return []
+            return payloads
+
+    async def _async_blob_extractor(self, service_client, container_name: str, parent_arn: str, base_risk: float) -> List[Dict]:
+        """Concurrent worker for extracting blobs from a specific container."""
+        blob_payloads = []
+        async with self._azurite_semaphore:
+            try:
+                container_client = service_client.get_container_client(container_name)
+                blob_iter = container_client.list_blobs(include=['metadata'])
+                
+                async for blob in blob_iter:
+                    b_name = blob.name
+                    b_arn = f"{parent_arn}/blobs/{b_name}"
+                    b_metadata = blob.metadata or {}
+                    
+                    b_tags = []
+                    b_risk = base_risk
+                    
+                    # Deep Blob Payload Heuristics
+                    if "pci" in b_name.lower() or "billing" in b_name.lower():
+                        b_tags.append({"Key": "DataClassification", "Value": "Restricted"})
+                        b_risk += 0.4
+                    if "tfstate" in b_name.lower():
+                        b_tags.append({"Key": "Infrastructure", "Value": "StateFile"})
+                        b_risk += 0.4
+                        
+                    b_data = {
+                        "Name": b_name, 
+                        "Tags": b_tags, 
+                        "Metadata": b_metadata,
+                        "Size": blob.size,
+                        "ContentType": blob.content_settings.content_type if blob.content_settings else "unknown"
+                    }
+                    
+                    b_has_changed, b_state_hash = await self.check_state_differential(b_arn, b_data)
+                    if b_has_changed:
+                        b_data["_state_hash"] = b_state_hash
+                        b_payload = self.format_urm_payload("storage", "StorageBlob", b_arn, b_data, min(b_risk, 1.0))
+                        b_payload["cloud_provider"] = "azure"
+                        blob_payloads.append(b_payload)
+                        
+            except Exception as e:
+                self.logger.warning(f"Failed to extract blobs from container {container_name}: {e}")
+                
+        return blob_payloads
 
     # ==========================================================================
     # GLOBAL ARM DEEP EXTRACTION (PATH B)
     # ==========================================================================
 
     async def _extract_virtual_machines(self, subscription_id: str, risk: float) -> List[Dict]:
-        """Extracts Azure Virtual Machines via ARM compute client."""
+        """
+        Extracts Azure Virtual Machines via ARM compute client.
+        Captures 'identity' metadata to empower IdentityFabric cross-cloud linkage.
+        """
         payloads = []
         try:
             client = ComputeManagementClient(credential=self.credential, subscription_id=subscription_id)
@@ -304,19 +338,36 @@ class AzureEngine(BaseDiscoveryEngine):
             vms = await self.execute_with_backoff(asyncio.to_thread, fetch_vms)
             
             for vm in vms:
-                arn = vm.id
-                vm_dict = vm.as_dict()
-                
-                vm_risk = risk
-                if not vm_dict.get('network_profile', {}).get('network_interfaces'):
-                    vm_dict.setdefault("tags", {})["NetworkState"] = "Orphaned"
-                
-                has_changed, state_hash = await self.check_state_differential(arn, vm_dict)
-                if has_changed:
-                    vm_dict["_state_hash"] = state_hash
-                    payload = self.format_urm_payload("compute", "VirtualMachine", arn, vm_dict, min(vm_risk, 1.0))
-                    payload["cloud_provider"] = "azure"
-                    payloads.append(payload)
+                try:
+                    arn = vm.id
+                    vm_dict = vm.as_dict()
+                    
+                    vm_risk = risk
+                    vm_tags = vm_dict.get('tags', {}) or {}
+                    
+                    # Infrastructure Heuristics
+                    if not vm_dict.get('network_profile', {}).get('network_interfaces'):
+                        vm_tags["NetworkState"] = "Orphaned"
+                        
+                    # Explictly map Managed Identities for Cross-Cloud bridging
+                    if vm_dict.get("identity"):
+                        identity_type = vm_dict["identity"].get("type")
+                        vm_tags["IdentityType"] = str(identity_type)
+                        if "SystemAssigned" in str(identity_type):
+                            vm_risk += 0.2  # Increases lateral movement capability
+                            
+                    vm_dict["tags"] = vm_tags
+                    
+                    has_changed, state_hash = await self.check_state_differential(arn, vm_dict)
+                    if has_changed:
+                        vm_dict["_state_hash"] = state_hash
+                        payload = self.format_urm_payload("compute", "VirtualMachine", arn, vm_dict, min(vm_risk, 1.0))
+                        payload["cloud_provider"] = "azure"
+                        payloads.append(payload)
+                        
+                except Exception as e:
+                    self.logger.warning(f"Dropped malformed ARM VM entity: {e}")
+                    continue # Blast Radius Containment
                     
             return payloads
         except Exception as e:
@@ -335,30 +386,38 @@ class AzureEngine(BaseDiscoveryEngine):
             vnets = await self.execute_with_backoff(asyncio.to_thread, fetch_vnets)
             
             for vnet in vnets:
-                arn = vnet.id
-                vnet_dict = vnet.as_dict()
-                
-                has_changed, state_hash = await self.check_state_differential(arn, vnet_dict)
-                if has_changed:
-                    vnet_dict["_state_hash"] = state_hash
-                    payload = self.format_urm_payload("network", "VirtualNetwork", arn, vnet_dict, risk)
-                    payload["cloud_provider"] = "azure"
-                    payloads.append(payload)
+                try:
+                    arn = vnet.id
+                    vnet_dict = vnet.as_dict()
                     
-                for subnet in vnet_dict.get('subnets', []):
-                    sub_arn = subnet.get('id')
-                    sub_risk = risk
-                    
-                    if not subnet.get('network_security_group'):
-                        subnet.setdefault("tags", {})["Security"] = "Unprotected"
-                        sub_risk += 0.3
+                    has_changed, state_hash = await self.check_state_differential(arn, vnet_dict)
+                    if has_changed:
+                        vnet_dict["_state_hash"] = state_hash
+                        payload = self.format_urm_payload("network", "VirtualNetwork", arn, vnet_dict, risk)
+                        payload["cloud_provider"] = "azure"
+                        payloads.append(payload)
                         
-                    s_has_changed, s_state_hash = await self.check_state_differential(sub_arn, subnet)
-                    if s_has_changed:
-                        subnet["_state_hash"] = s_state_hash
-                        s_payload = self.format_urm_payload("network", "Subnet", sub_arn, subnet, min(sub_risk, 1.0))
-                        s_payload["cloud_provider"] = "azure"
-                        payloads.append(s_payload)
+                    # Extract associated Subnets
+                    for subnet in vnet_dict.get('subnets', []):
+                        sub_arn = subnet.get('id')
+                        sub_risk = risk
+                        sub_tags = subnet.get("tags", {}) or {}
+                        
+                        if not subnet.get('network_security_group'):
+                            sub_tags["Security"] = "Unprotected"
+                            sub_risk += 0.3
+                            
+                        subnet["tags"] = sub_tags
+                        s_has_changed, s_state_hash = await self.check_state_differential(sub_arn, subnet)
+                        if s_has_changed:
+                            subnet["_state_hash"] = s_state_hash
+                            s_payload = self.format_urm_payload("network", "Subnet", sub_arn, subnet, min(sub_risk, 1.0))
+                            s_payload["cloud_provider"] = "azure"
+                            payloads.append(s_payload)
+                            
+                except Exception as e:
+                    self.logger.warning(f"Dropped malformed ARM VNet entity: {e}")
+                    continue # Blast Radius Containment
                         
             return payloads
         except Exception as e:
@@ -366,7 +425,7 @@ class AzureEngine(BaseDiscoveryEngine):
             return []
 
     async def _extract_network_security_groups(self, subscription_id: str, risk: float) -> List[Dict]:
-        """Extracts Azure NSGs and evaluates deep inbound port exposure rules."""
+        """Extracts Azure NSGs and applies deep heuristic evaluation of inbound exposure rules."""
         payloads = []
         try:
             client = NetworkManagementClient(credential=self.credential, subscription_id=subscription_id)
@@ -377,24 +436,33 @@ class AzureEngine(BaseDiscoveryEngine):
             nsgs = await self.execute_with_backoff(asyncio.to_thread, fetch_nsgs)
             
             for nsg in nsgs:
-                arn = nsg.id
-                nsg_dict = nsg.as_dict()
-                nsg_risk = risk
-                
-                for rule in nsg_dict.get('security_rules', []):
-                    if rule.get('direction') == 'Inbound' and rule.get('access') == 'Allow':
-                        port = rule.get('destination_port_range')
-                        if port in ['22', '3389', 'Any', '*']:
-                            nsg_dict.setdefault("tags", {})["Exposure"] = "CriticalPortOpen"
-                            nsg_risk += 0.5
-                            break
-                            
-                has_changed, state_hash = await self.check_state_differential(arn, nsg_dict)
-                if has_changed:
-                    nsg_dict["_state_hash"] = state_hash
-                    payload = self.format_urm_payload("network", "NetworkSecurityGroup", arn, nsg_dict, min(nsg_risk, 1.0))
-                    payload["cloud_provider"] = "azure"
-                    payloads.append(payload)
+                try:
+                    arn = nsg.id
+                    nsg_dict = nsg.as_dict()
+                    nsg_risk = risk
+                    nsg_tags = nsg_dict.get("tags", {}) or {}
+                    
+                    # Deep Network Vulnerability Heuristics
+                    for rule in nsg_dict.get('security_rules', []):
+                        if str(rule.get('direction')) == 'Inbound' and str(rule.get('access')) == 'Allow':
+                            port = str(rule.get('destination_port_range', ''))
+                            if port in ['22', '3389', 'Any', '*']:
+                                nsg_tags["Exposure"] = "CriticalPortOpen"
+                                nsg_risk += 0.5
+                                break
+                                
+                    nsg_dict["tags"] = nsg_tags
+                    
+                    has_changed, state_hash = await self.check_state_differential(arn, nsg_dict)
+                    if has_changed:
+                        nsg_dict["_state_hash"] = state_hash
+                        payload = self.format_urm_payload("network", "NetworkSecurityGroup", arn, nsg_dict, min(nsg_risk, 1.0))
+                        payload["cloud_provider"] = "azure"
+                        payloads.append(payload)
+                        
+                except Exception as e:
+                    self.logger.warning(f"Dropped malformed ARM NSG entity: {e}")
+                    continue # Blast Radius Containment
                     
             return payloads
         except Exception as e:

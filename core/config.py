@@ -14,6 +14,10 @@ from pydantic import BaseModel, Field, ValidationError
 # The strict Type-Safe configuration gateway powered by Pydantic V2.
 # Maps the YAML state into immutable Python memory structures. Guarantees that
 # the system never executes with corrupted, missing, or mismatched parameters.
+# 
+# TITAN UPGRADES:
+# - Property Aliasing: Safely exposes legacy/alternate key names (neo4j_uri) 
+#   without mutating the base schema validation.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -53,6 +57,22 @@ class DatabaseConfig(BaseModel):
     connection_timeout_sec: int = 15
     transaction_retry_time_sec: int = 30
     ingestion: DatabaseIngestion
+
+    # --- TITAN GATEWAY PROPERTIES ---
+    # These dynamic properties act as unbreakable bridges for sub-engines that 
+    # expect specifically named parameters, while preserving the original YAML schema.
+    
+    @property
+    def neo4j_uri(self) -> str:
+        return self.uri
+
+    @property
+    def neo4j_user(self) -> str:
+        return self.user
+
+    @property
+    def neo4j_password(self) -> str:
+        return self.password
 
 class OrchestratorConfig(BaseModel):
     max_concurrent_tenants: int = 10
@@ -238,6 +258,13 @@ class ConfigurationManager:
         except Exception as e:
             self.logger.critical(f"FATAL: Failed to map tenants: {e}")
             sys.exit(1)
+
+    def _generate_mock_tenants(self) -> List[TenantConfig]:
+        """Generates a fallback physical tenant matrix if the configuration is missing."""
+        return [
+            TenantConfig(id="PROJ-FIN-01", name="Finance Subsystem", environment_type="MOCK", credentials=TenantCredentials()),
+            TenantConfig(id="PROJ-WEB-02", name="Public Web Gateway", environment_type="MOCK", credentials=TenantCredentials())
+        ]
 
 # Export the singleton instance
 config = ConfigurationManager()
