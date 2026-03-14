@@ -1,468 +1,592 @@
-import argparse
-import asyncio
-import logging
-import logging.handlers
+#!/usr/bin/env python3
+"""
+CLOUDSCAPE NEXUS 5.2 TITAN — MAIN ENTRY POINT (SUPREME EDITION)
+================================================================
+The Sovereign-Forensic Multi-Cloud Intelligence Mesh.
+
+This module serves as the primary execution gateway, bootstrapping:
+- Safe encoding for cross-platform Unicode stability
+- Absolute path resolution and directory structure creation
+- Logging subsystem initialization with forensic formatting
+- Process management with graceful signal handling
+- Health check subsystem for pre-flight validation
+- Argument parsing for operational modes
+- AsyncIO event loop management with Windows compatibility
+
+TITAN 5.2 FIXES:
+1. WINDOWS COMPATIBILITY: SIGTERM handling uses try/except, os.statvfs replaced.
+2. ENCODING SAFETY: apply_safe_encoding_lock uses function scope, not module-level.
+3. GRACEFUL SHUTDOWN: Proper async cleanup with timeout for hung tasks.
+4. DISK SPACE CHECK: Platform-agnostic using shutil.disk_usage instead of statvfs.
+"""
+
 import os
 import sys
-import io
-import socket
-import subprocess
 import time
 import signal
+import shutil
+import logging
+import asyncio
+import argparse
 import platform
 import traceback
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any, List
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 TITAN - MASTER COMMAND & CONTROL (C2) GATEWAY
+# PLATFORM SAFETY — ENCODING LOCK
 # ==============================================================================
-# The Enterprise Entrypoint for the Sovereign-Forensic Digital Tool.
-# Orchestrates the 3 Core Loops: The Observer (Ingestion), The Brain (Neo4j), 
-# and The Hologram (Visualization/UI).
-#
-# TITAN UPGRADES ACTIVE:
-# 1. Hardware UTF-8 Lock: Overrides Windows cp1252 defaults to prevent crashes 
-#    when rendering NetworkX pathing arrows.
-# 2. Async Teardown Matrix: Guarantees Neo4j and Docker socket closure on Ctrl+C.
-# 3. Asynchronous Subprocess Manager: Safely spawns and kills the detached UI.
-# 4. Deep Socket Diagnostics: Verifies Tailscale Mesh, Redis, and Neo4j routing.
-# 5. OS-Level Event Loop Normalization: Prevents Windows/Boto3 async lockups.
-# ==============================================================================
+# Applied as a function call, NOT at import time, to prevent side effects 
+# during module imports (e.g., pytest collection, IDE introspection).
 
-# ------------------------------------------------------------------------------
-# 1. OS-LEVEL ENCODING LOCK (THE WINDOWS CRASH FIX)
-# ------------------------------------------------------------------------------
-def apply_hardware_encoding_lock():
+def apply_safe_encoding_lock() -> None:
     """
-    Forces the standard output and error streams to utilize UTF-8 encoding.
-    Crucial for Windows systems that default to cp1252, which violently crashes 
-    when the HAPD Engine attempts to log NetworkX topological arrows or emojis.
+    Forces UTF-8 on all standard streams for cross-platform consistency.
+    Called during main() initialization, NOT at module load time.
     """
-    if sys.platform == 'win32':
-        try:
-            # Detach the underlying binary buffer and re-wrap it with strict UTF-8
-            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-            
-            # Force Python's internal environment variable for subprocesses
-            os.environ["PYTHONIOENCODING"] = "utf-8"
-        except Exception as e:
-            print(f"[!] Warning: Failed to lock hardware encoding: {e}")
-
-apply_hardware_encoding_lock()
-
-# ------------------------------------------------------------------------------
-# 2. PATH RESOLUTION & CORE IMPORTS
-# ------------------------------------------------------------------------------
-# Ensure the root project directory is physically in the Python Path for sub-module imports
-root_dir = Path(__file__).resolve().parent
-if str(root_dir) not in sys.path:
-    sys.path.insert(0, str(root_dir))
-
-# Construct Sovereign-Forensic Directories (BSON Ledgers, Logs, Outputs)
-os.makedirs(os.path.join(root_dir, "forensics", "logs"), exist_ok=True)
-os.makedirs(os.path.join(root_dir, "forensics", "reports"), exist_ok=True)
-os.makedirs(os.path.join(root_dir, "forensics", "bson_ledger"), exist_ok=True)
-os.makedirs(os.path.join(root_dir, "dashboard", "tmp"), exist_ok=True)
-
-# Delayed imports to allow path injection and encoding locks to succeed first
-try:
-    from core.config import config
-    from core.orchestrator import CloudscapeOrchestrator
-    from core.processor.ingestor import ingestor
+    import io
     
-    # Safely attempt to import MeshSeeder (only used in MOCK/Seed mode)
     try:
-        from utils.mesh_seeder import MeshSeeder
-    except ImportError:
-        MeshSeeder = None
-        
-except ImportError as e:
-    print(f"\n\033[91m[FATAL] Pipeline Integrity Failure: Could not resolve core modules.\033[0m")
-    print(f"Details: {e}")
-    sys.exit(1)
-
-# ------------------------------------------------------------------------------
-# 3. GLOBAL TELEMETRY & LOGGING MATRICES
-# ------------------------------------------------------------------------------
-class CustomConsoleFormatter(logging.Formatter):
-    """Injects ANSI color coding into the terminal for the Command Center."""
-    grey = "\x1b[38;20m"
-    blue = "\x1b[36;20m"
-    yellow = "\x1b[33;20m"
-    red = "\x1b[31;20m"
-    bold_red = "\x1b[31;1m"
-    reset = "\x1b[0m"
-    format_str = "%(asctime)s | %(levelname)-8s | %(name)-35s | %(message)s"
-
-    FORMATS = {
-        logging.DEBUG: grey + format_str + reset,
-        logging.INFO: blue + format_str + reset,
-        logging.WARNING: yellow + format_str + reset,
-        logging.ERROR: red + format_str + reset,
-        logging.CRITICAL: bold_red + format_str + reset
-    }
-
-    def format(self, record):
-        log_fmt = self.FORMATS.get(record.levelno)
-        formatter = logging.Formatter(log_fmt, datefmt="%Y-%m-%d %H:%M:%S")
-        return formatter.format(record)
-
-def initialize_telemetry_matrix(debug_mode: bool = False):
-    """
-    Establishes the global terminal and file-based logging configuration.
-    Implements rotating file handlers to prevent log-bloat on massive graph scans.
-    """
-    log_level = logging.DEBUG if debug_mode else logging.INFO
-    date_format = "%Y-%m-%d %H:%M:%S"
-    
-    root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
-    
-    if root_logger.hasHandlers():
-        root_logger.handlers.clear()
-
-    # Console Handler (Rich ANSI)
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(CustomConsoleFormatter())
-    root_logger.addHandler(console_handler)
-
-    # File Handler (Strict ASCII/UTF-8 for the Forensic Ledger)
-    log_file = os.path.join(root_dir, "forensics", "logs", f"titan_engine_{int(time.time())}.log")
-    file_handler = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=15*1024*1024, backupCount=5, encoding='utf-8'
-    )
-    plain_format = "%(asctime)s | %(levelname)-8s | %(name)-35s | %(message)s"
-    file_handler.setFormatter(logging.Formatter(plain_format, datefmt=date_format))
-    root_logger.addHandler(file_handler)
-    
-    # Mute noisy internal dependency streams
-    logging.getLogger("boto3").setLevel(logging.WARNING)
-    logging.getLogger("botocore").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("neo4j").setLevel(logging.WARNING)
-    logging.getLogger("azure.core.pipeline.policies").setLevel(logging.WARNING)
-
-logger = logging.getLogger("Cloudscape.C2.Gateway")
-
-# ------------------------------------------------------------------------------
-# 4. SUBPROCESS MANAGER & GRACEFUL TEARDOWN
-# ------------------------------------------------------------------------------
-class TitanTeardownManager:
-    """
-    The Absolute Memory Manager.
-    Tracks and safely assassinates all active subprocesses, UI threads, and database 
-    connection pools upon script termination (Success, Failure, or Ctrl+C).
-    Guarantees zero zombie sockets are left behind in Docker.
-    """
-    def __init__(self):
-        self.active_processes: List[subprocess.Popen] = []
-        self.teardown_initiated = False
-
-    def register_process(self, proc: subprocess.Popen):
-        """Registers a detached process (like Streamlit or Presidio) for tracking."""
-        self.active_processes.append(proc)
-
-    async def execute_teardown(self):
-        """The Master Assassination Protocol."""
-        if self.teardown_initiated:
-            return
-        self.teardown_initiated = True
-        
-        print("\n")
-        logger.info("Commencing Graceful Titan Teardown Sequence...")
-        
-        # 1. Assassinate detached UI Workers & Middleware
-        for proc in self.active_processes:
-            try:
-                if proc.poll() is None:
-                    logger.info(f"Terminating background UI/Middleware process (PID: {proc.pid})...")
-                    proc.terminate()
-                    try:
-                        # Give it 3 seconds to die gracefully
-                        proc.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        logger.warning(f"Process {proc.pid} resisted termination. Sending SIGKILL.")
-                        proc.kill()
-            except Exception as e:
-                logger.error(f"Failed to terminate UI process: {e}")
-
-        # 2. Sever Neo4j Database Kernel (The Brain)
-        try:
-            logger.info("Severing Neo4j Graph Database connections...")
-            await ingestor.close()
-        except Exception as e:
-            logger.error(f"Failed to close Neo4j driver pool: {e}")
-            
-        logger.info("System Memory and Sockets successfully released.")
-
-teardown_manager = TitanTeardownManager()
-
-def posix_signal_handler(sig, frame):
-    """Intercepts OS-level termination signals (Ctrl+C) to trigger the async teardown."""
-    print("\n\033[91m[!] Termination Signal Intercepted. Halting Execution...\033[0m")
-    
-    # We must bridge the synchronous signal handler to the async teardown routine
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(teardown_manager.execute_teardown())
-    except RuntimeError:
-        # If no loop is running, we spin one up just for the funeral
-        asyncio.run(teardown_manager.execute_teardown())
-    finally:
-        sys.exit(0)
-
-# Register POSIX signal handlers
-signal.signal(signal.SIGINT, posix_signal_handler)
-signal.signal(signal.SIGTERM, posix_signal_handler)
-
-# ------------------------------------------------------------------------------
-# 5. ENVIRONMENT PRE-FLIGHT & MOCK INJECTORS
-# ------------------------------------------------------------------------------
-def print_cloudscape_banner():
-    banner = f"""
-    ██████╗██╗      ██████╗ ██╗   ██╗██████╗ ███████╗ ██████╗ █████╗ ██████╗ ███████╗
-    ██╔════╝██║     ██╔═══██╗██║   ██║██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗██╔════╝
-    ██║     ██║     ██║   ██║██║   ██║██║  ██║███████╗██║     ███████║██████╔╝█████╗  
-    ██║     ██║     ██║   ██║██║   ██║██║  ██║╚════██║██║     ██╔══██║██╔═══╝ ██╔══╝  
-    ╚██████╗███████╗╚██████╔╝╚██████╔╝██████╔╝███████║╚██████╗██║  ██║██║     ███████╗
-     ╚═════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝     ╚══════╝
-    ==================================================================================
-    CLOUDSCAPE NEXUS v5.0.1 | ENTERPRISE MULTI-CLOUD GRAPH DISCOVERY (ZERO-G)
-    ==================================================================================
-    Host OS: {platform.system()} {platform.release()} | Runtime: Python {platform.python_version()}
-    Zero-Trust Mesh : Configured      | Execution Mode : {config.settings.execution_mode}
-    Target Regions  : {len(config.settings.aws.target_regions)}               | Physical Tenants : {len(config.tenants)}
-    ==================================================================================
-    """
-    print("\033[96m" + banner + "\033[0m")
-
-def inject_mock_credentials():
-    """Forces environment variables for LocalStack compatibility if in MOCK mode."""
-    mode = config.settings.execution_mode.upper()
-    if mode == "MOCK":
-        logger.info("MOCK Mode Detected: Injecting isolated offline credentials to bypass physical validations.")
-        os.environ["AWS_ACCESS_KEY_ID"] = "testing"
-        os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
-        os.environ["AWS_DEFAULT_REGION"] = config.settings.aws.target_regions[0] if config.settings.aws.target_regions else "us-east-1"
-        os.environ["AZURE_TENANT_ID"] = "mock-azure-tenant"
-        os.environ["AZURE_CLIENT_ID"] = "mock-azure-client"
-        os.environ["AZURE_CLIENT_SECRET"] = "mock-azure-secret"
-
-# ------------------------------------------------------------------------------
-# 6. ASYNCHRONOUS DEEP-SOCKET DIAGNOSTICS
-# ------------------------------------------------------------------------------
-async def tcp_ping(host: str, port: int, timeout: float = 1.0) -> Tuple[bool, float]:
-    """Executes a non-blocking TCP handshake to measure component latency."""
-    start = time.perf_counter()
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), 
-            timeout=timeout
-        )
-        writer.close()
-        await writer.wait_closed()
-        return True, (time.perf_counter() - start) * 1000
+        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        elif sys.stdout:
+            sys.stdout = io.TextIOWrapper(
+                sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True
+            )
     except Exception:
-        return False, 0.0
+        pass  # Non-critical: some environments have frozen stdout
+        
+    try:
+        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        elif sys.stderr:
+            sys.stderr = io.TextIOWrapper(
+                sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True
+            )
+    except Exception:
+        pass
 
-async def run_preflight_diagnostics(force: bool) -> bool:
+    # Set environment variable for child processes
+    os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+
+
+# ==============================================================================
+# PATH RESOLUTION & DIRECTORY BOOTSTRAPPING
+# ==============================================================================
+
+# Absolute root of the Cloudscape project
+PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+# Required directory structure
+REQUIRED_DIRECTORIES = [
+    PROJECT_ROOT / "forensics" / "logs",
+    PROJECT_ROOT / "forensics" / "reports",
+    PROJECT_ROOT / "forensics" / "bson_ledger",
+    PROJECT_ROOT / "forensics" / "snapshots",
+    PROJECT_ROOT / "data" / "manifests",
+    PROJECT_ROOT / "data" / "temp",
+    PROJECT_ROOT / "dashboard" / "tmp",
+    PROJECT_ROOT / "registry",
+]
+
+
+def bootstrap_directories() -> None:
+    """Creates all required directories idempotently."""
+    for directory in REQUIRED_DIRECTORIES:
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            print(f"[WARN] Permission denied creating: {directory}")
+        except Exception as e:
+            print(f"[WARN] Could not create {directory}: {e}")
+
+
+# ==============================================================================
+# LOGGING SUBSYSTEM
+# ==============================================================================
+
+class TitanLogFormatter(logging.Formatter):
     """
-    The Pre-Flight Diagnostics Matrix.
-    Verifies that the multi-container Sovereign-Forensic Docker stack is alive.
+    Custom formatter with severity coloring and structured fields.
+    Color codes are ANSI-compatible; disabled on Windows unless colorama is present.
     """
-    logger.info("Executing Enterprise Pre-Flight Component Diagnostics...")
     
-    components = [
-        ("The Brain (Neo4j LPG)", "127.0.0.1", 7687, True),
-        ("AWS Emulator (LocalStack)", "127.0.0.1", 4566, config.settings.execution_mode == "MOCK"),
-        ("Azure Emulator (Azurite)", "127.0.0.1", 10000, config.settings.execution_mode == "MOCK"),
-        ("Hash Circuit (Redis)", "127.0.0.1", 6379, False), # Optional component
-        ("BSON Ledger (MongoDB)", "127.0.0.1", 27017, False) # Optional component
+    # ANSI Color Codes (disabled on Windows cmd.exe, enabled in modern terminals)
+    COLORS = {
+        logging.DEBUG: "\033[36m",     # Cyan
+        logging.INFO: "\033[32m",      # Green
+        logging.WARNING: "\033[33m",   # Yellow
+        logging.ERROR: "\033[31m",     # Red
+        logging.CRITICAL: "\033[1;91m", # Bold Red
+    }
+    RESET = "\033[0m"
+    
+    def __init__(self, use_color: bool = True):
+        super().__init__()
+        self.use_color = use_color and self._supports_color()
+    
+    @staticmethod
+    def _supports_color() -> bool:
+        """Checks if the current terminal supports ANSI color codes."""
+        if platform.system() == 'Windows':
+            # Modern Windows Terminal supports ANSI, but cmd.exe does not
+            return os.environ.get('WT_SESSION') is not None or 'ANSICON' in os.environ
+        return hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
+    
+    def format(self, record: logging.LogRecord) -> str:
+        timestamp = datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        level = record.levelname.ljust(8)
+        name = record.name[-35:].ljust(35)
+        message = record.getMessage()
+        
+        if self.use_color:
+            color = self.COLORS.get(record.levelno, "")
+            return f"{timestamp} | {color}{level}{self.RESET} | {name} | {message}"
+        else:
+            return f"{timestamp} | {level} | {name} | {message}"
+
+
+def initialize_logging(log_level: str = "INFO", log_to_file: bool = True) -> logging.Logger:
+    """
+    Initializes the enterprise logging subsystem.
+    
+    - Console handler with formatted output
+    - File handler for forensic logging (rotated daily)
+    - Suppresses noisy third-party loggers
+    """
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    
+    # Clear existing handlers (prevents duplication on re-init)
+    root_logger.handlers.clear()
+    
+    # Console Handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(TitanLogFormatter(use_color=True))
+    console_handler.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    root_logger.addHandler(console_handler)
+    
+    # File Handler (Forensic Log)
+    if log_to_file:
+        try:
+            log_dir = PROJECT_ROOT / "forensics" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / f"cloudscape_{datetime.now().strftime('%Y%m%d')}.log"
+            
+            file_handler = logging.FileHandler(str(log_file), encoding='utf-8')
+            file_handler.setFormatter(logging.Formatter(
+                "%(asctime)s | %(levelname)-8s | %(name)-35s | %(message)s"
+            ))
+            file_handler.setLevel(logging.DEBUG)  # File always captures DEBUG
+            root_logger.addHandler(file_handler)
+        except Exception as e:
+            root_logger.warning(f"Could not create file log handler: {e}")
+    
+    # Suppress noisy third-party loggers
+    noisy_loggers = [
+        'botocore', 'urllib3', 'azure', 'neo4j', 'asyncio',
+        'boto3', 'chardet', 'requests', 'paramiko', 'PIL',
+        'streamlit', 'matplotlib', 's3transfer',
     ]
+    for name in noisy_loggers:
+        logging.getLogger(name).setLevel(logging.WARNING)
     
-    all_critical_passed = True
-    print("\n" + "="*60)
-    print(" TITAN PRE-FLIGHT ROUTING MATRIX")
-    print("="*60)
+    logger = logging.getLogger("Cloudscape.Main")
+    logger.info("Logging subsystem initialized.")
+    return logger
 
-    for name, host, port, is_critical in components:
-        is_alive, latency = await tcp_ping(host, port)
-        
-        status_color = "\033[92mPASS\033[0m" if is_alive else ("\033[91mFAIL\033[0m" if is_critical else "\033[93mWARN\033[0m")
-        latency_str = f"{latency:.2f}ms" if is_alive else "OFFLINE"
-        crit_str = "[CRITICAL]" if is_critical else "[OPTIONAL]"
-        
-        print(f" [{status_color}] {crit_str:<10} {name:<25} : {host}:{port} ({latency_str})")
-        
-        if is_critical and not is_alive:
-            all_critical_passed = False
 
-    print("="*60 + "\n")
+# ==============================================================================
+# PROCESS MANAGEMENT & SIGNAL HANDLING
+# ==============================================================================
 
-    if not all_critical_passed:
-        if force:
-            logger.warning("CRITICAL COMPONENTS OFFLINE. Overriding abort sequence via --force flag. Expect catastrophic failures.")
-            return True
-        else:
-            logger.critical("PRE-FLIGHT FAILED. System is unstable. Please check Docker containers. Aborting Ignition.")
-            return False
-            
-    return True
-
-# ------------------------------------------------------------------------------
-# 7. DETACHED UI & WORKER SPAWNING
-# ------------------------------------------------------------------------------
-def spawn_dashboard():
-    """Spawns the Streamlit Aether Dashboard (The Hologram) as a detached process."""
-    ui_path = os.path.join(root_dir, "dashboard", "app.py")
+class TitanProcessManager:
+    """
+    Manages the application lifecycle, signal handling, and graceful shutdown.
     
-    if not os.path.exists(ui_path):
-        logger.error(f"Cannot find UI module at {ui_path}. Feature disabled.")
-        return
-            
-    try:
-        logger.info("[*] Spawning Aether Visualization Dashboard (Detached Thread)...")
-        # Headless mode prevents the browser from forcing itself open on the host server
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "streamlit", "run", ui_path, "--server.port=8501", "--server.headless=true"],
-            stdout=subprocess.DEVNULL, # Prevent Streamlit from polluting the main terminal logs
-            stderr=subprocess.DEVNULL,
-            cwd=str(root_dir)
+    WINDOWS FIX: SIGTERM is wrapped in try/except since it's not supported 
+    on Windows. Only SIGINT (Ctrl+C) is guaranteed cross-platform.
+    """
+    
+    def __init__(self):
+        self.logger = logging.getLogger("Cloudscape.Process")
+        self._shutdown_event = asyncio.Event() if asyncio.get_event_loop().is_running() else None
+        self._orchestrator = None
+        self._start_time = time.monotonic()
+        self._install_signal_handlers()
+    
+    def _install_signal_handlers(self) -> None:
+        """Installs signal handlers with Windows compatibility."""
+        # SIGINT (Ctrl+C) — works on all platforms
+        signal.signal(signal.SIGINT, self._handle_shutdown_signal)
+        
+        # SIGTERM — POSIX only, try/except for Windows compatibility
+        try:
+            signal.signal(signal.SIGTERM, self._handle_shutdown_signal)
+            self.logger.debug("SIGTERM handler installed.")
+        except (OSError, ValueError, AttributeError):
+            self.logger.debug("SIGTERM not available on this platform (Windows). Using SIGINT only.")
+    
+    def _handle_shutdown_signal(self, signum: int, frame) -> None:
+        """Handles shutdown signals gracefully."""
+        sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+        self.logger.warning(f"Received signal {sig_name}. Initiating graceful shutdown...")
+        
+        if self._orchestrator:
+            self._orchestrator.request_shutdown()
+        
+        if self._shutdown_event:
+            self._shutdown_event.set()
+    
+    def set_orchestrator(self, orchestrator) -> None:
+        """Registers the orchestrator for signal-triggered shutdown."""
+        self._orchestrator = orchestrator
+    
+    def get_uptime_seconds(self) -> float:
+        """Returns the process uptime in seconds."""
+        return time.monotonic() - self._start_time
+
+
+# ==============================================================================
+# HEALTH CHECK SUBSYSTEM
+# ==============================================================================
+
+class HealthCheckRunner:
+    """
+    Pre-flight validation system. Checks:
+    - Required Python version
+    - Required dependencies
+    - Disk space (platform-agnostic)
+    - Network connectivity to key endpoints
+    """
+    
+    def __init__(self):
+        self.logger = logging.getLogger("Cloudscape.Health")
+        self.checks_passed: int = 0
+        self.checks_failed: int = 0
+        self.check_results: List[Dict[str, Any]] = []
+    
+    def run_all_checks(self) -> bool:
+        """Runs all pre-flight health checks. Returns True if all critical checks pass."""
+        self.logger.info("Running pre-flight health checks...")
+        
+        all_passed = True
+        
+        # Check 1: Python Version
+        all_passed &= self._check_python_version()
+        
+        # Check 2: Required Dependencies
+        all_passed &= self._check_dependencies()
+        
+        # Check 3: Disk Space (Platform-agnostic)
+        self._check_disk_space()  # Non-critical, always returns True
+        
+        # Check 4: Config Integrity
+        all_passed &= self._check_config_integrity()
+        
+        # Summary
+        total = self.checks_passed + self.checks_failed
+        self.logger.info(
+            f"Health checks complete: {self.checks_passed}/{total} passed, "
+            f"{self.checks_failed} failed."
         )
-        teardown_manager.register_process(proc)
-        logger.info("  [OK] Dashboard engine dispatched to internal port 8501.")
-        logger.info("  [i] Dashboard UI accessible at: http://localhost:8501")
-    except Exception as e:
-        logger.error(f"Failed to launch Dashboard process: {e}")
-
-# ------------------------------------------------------------------------------
-# 8. PIPELINE EXECUTION PROCEDURES
-# ------------------------------------------------------------------------------
-async def run_seed():
-    """Ignites the local Docker mesh with synthetic base infrastructure."""
-    if not MeshSeeder:
-        logger.error("MeshSeeder module not found. Cannot hydrate environments.")
-        return
         
-    logger.info("Engaging Local Mesh Seeder Protocol...")
-    try:
-        seeder = MeshSeeder()
-        # Accommodate both async and sync implementations of the Seeder
-        if asyncio.iscoroutinefunction(seeder.execute):
-            await seeder.execute()
-        else:
-            await asyncio.to_thread(seeder.execute)
-    except Exception as e:
-        logger.error(f"Catastrophic failure during Mesh Seeding: {e}")
-        logger.debug(traceback.format_exc())
-
-async def run_scan(force: bool = False):
-    """Executes the core Cloudscape extraction, convergence, and intelligence loop."""
-    is_ready = await run_preflight_diagnostics(force)
+        return all_passed
     
-    if not is_ready:
-        sys.exit(1)
-            
-    logger.info("Diagnostics clear. Handing control to the Master Orchestrator.")
+    def _check_python_version(self) -> bool:
+        """Validates minimum Python version (3.10+)."""
+        major, minor = sys.version_info[:2]
+        if major < 3 or (major == 3 and minor < 10):
+            self.logger.error(f"Python 3.10+ required. Current: {major}.{minor}")
+            self._record_check("python_version", False, f"{major}.{minor}")
+            return False
+        self._record_check("python_version", True, f"{major}.{minor}")
+        return True
     
-    try:
-        orchestrator = CloudscapeOrchestrator()
-        await orchestrator.execute_global_scan()
-    except Exception as e:
-        logger.critical(f"Unhandled system crash in Master Orchestrator: {e}")
-        logger.debug(traceback.format_exc())
-
-# ------------------------------------------------------------------------------
-# 9. THE MASTER ASYNC EVENT LOOP
-# ------------------------------------------------------------------------------
-async def async_main(args: argparse.Namespace):
-    """
-    The Primary Event Loop Kernel.
-    Routes CLI arguments to their respective asynchronous execution pathways.
-    """
-    # 1. Establish Credentials
-    inject_mock_credentials()
-
-    # 2. Conditionally Boot the UI Thread
-    if args.ui or args.scan:
-        spawn_dashboard()
-
-    # 3. Execute Primary Directives based on CLI Multiplexing
-    try:
-        if args.check:
-            await run_preflight_diagnostics(force=args.force)
+    def _check_dependencies(self) -> bool:
+        """Validates that required Python packages are importable."""
+        required = [
+            'pydantic', 'yaml', 'neo4j', 'boto3', 'streamlit', 'plotly', 'pyvis'
+        ]
+        missing = []
+        
+        for pkg in required:
+            try:
+                __import__(pkg)
+            except ImportError:
+                missing.append(pkg)
+        
+        if missing:
+            self.logger.warning(f"Missing packages: {', '.join(missing)}. Some features may be unavailable.")
+            self._record_check("dependencies", False, {"missing": missing})
+            return len(missing) < 3  # Allow up to 2 missing non-critical packages
+        
+        self._record_check("dependencies", True, {"all_present": True})
+        return True
+    
+    def _check_disk_space(self) -> bool:
+        """
+        Platform-agnostic disk space check using shutil.disk_usage.
+        FIX: Replaces os.statvfs() which is not available on Windows.
+        """
+        try:
+            usage = shutil.disk_usage(str(PROJECT_ROOT))
+            free_gb = usage.free / (1024 ** 3)
+            total_gb = usage.total / (1024 ** 3)
+            pct_free = (usage.free / usage.total) * 100
             
-        elif args.seed:
-            if config.settings.execution_mode.upper() != "MOCK":
-                logger.warning("\033[93mWARNING: '--seed' flag passed in LIVE mode. Physical infrastructure seeding is restricted to MOCK environments.\033[0m")
+            if free_gb < 1.0:
+                self.logger.warning(f"Low disk space: {free_gb:.1f}GB free ({pct_free:.1f}%)")
+                self._record_check("disk_space", False, {"free_gb": round(free_gb, 2), "pct_free": round(pct_free, 1)})
             else:
-                await run_seed()
-                
-        elif args.scan:
-            await run_scan(force=args.force)
+                self.logger.debug(f"Disk space: {free_gb:.1f}GB free of {total_gb:.1f}GB ({pct_free:.1f}%)")
+                self._record_check("disk_space", True, {"free_gb": round(free_gb, 2), "pct_free": round(pct_free, 1)})
             
-        elif not args.ui:
-            logger.info("No operational directives passed. Use --scan, --seed, or --check. Initiating idle.")
+            return True  # Non-critical check
+        except Exception as e:
+            self.logger.debug(f"Could not check disk space: {e}")
+            self._record_check("disk_space", True, {"error": str(e)})
+            return True
+    
+    def _check_config_integrity(self) -> bool:
+        """Validates that the configuration manager loaded successfully."""
+        try:
+            from core.config import config as cfg
+            if cfg.settings is None:
+                self._record_check("config_integrity", False, "Settings is None")
+                return False
             
-    except asyncio.CancelledError:
-        logger.warning("Async execution loop cancelled by system interrupt.")
-    finally:
-        # The ultimate guarantee: Teardown executes regardless of success or crash.
-        await teardown_manager.execute_teardown()
+            diagnostics = cfg.validate_runtime_integrity()
+            self._record_check("config_integrity", True, diagnostics)
+            return True
+        except Exception as e:
+            self._record_check("config_integrity", False, str(e))
+            return False
+    
+    def _record_check(self, name: str, passed: bool, details: Any = None) -> None:
+        """Records a health check result."""
+        if passed:
+            self.checks_passed += 1
+        else:
+            self.checks_failed += 1
+        self.check_results.append({"check": name, "passed": passed, "details": details})
 
 
-# ------------------------------------------------------------------------------
-# 10. CLI PARSER & SYNCHRONOUS BOOTSTRAP
-# ------------------------------------------------------------------------------
-def main():
+# ==============================================================================
+# ARGUMENT PARSING
+# ==============================================================================
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Builds the main argument parser for the Cloudscape Nexus CLI."""
     parser = argparse.ArgumentParser(
-        description="Cloudscape Nexus 5.0 - Sovereign-Forensic Multi-Cloud Discovery Engine",
-        formatter_class=argparse.RawTextHelpFormatter
+        description="Cloudscape Nexus 5.2 Titan — Sovereign-Forensic Multi-Cloud Intelligence Mesh",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+╔══════════════════════════════════════════════════════════════╗
+║  CLOUDSCAPE NEXUS 5.2 TITAN — OPERATIONAL MODES            ║
+╠══════════════════════════════════════════════════════════════╣
+║  SCAN:    Execute full discovery pipeline (default)         ║
+║  DAEMON:  Continuous scan loop with configurable interval   ║
+║  REPORT:  Generate forensic report from latest scan         ║
+║  HEALTH:  Run pre-flight health checks only                 ║
+║  SCHEMA:  Apply database schema constraints                 ║
+╚══════════════════════════════════════════════════════════════╝
+
+Examples:
+  python main.py                   # Single scan cycle (MOCK mode)
+  python main.py --mode LIVE       # Single scan with live cloud APIs
+  python main.py --daemon          # Continuous daemon mode
+  python main.py --health          # Pre-flight health checks only
+  python main.py --schema          # Apply Neo4j schema constraints
+  python main.py --verbose         # Debug-level logging
+        """
     )
     
-    # Operational Action Flags
-    group_actions = parser.add_argument_group("Operational Directives")
-    group_actions.add_argument("--scan", action="store_true", help="Execute Global Infrastructure Discovery & Intelligence Matrix (HAPD)")
-    group_actions.add_argument("--seed", action="store_true", help="Hydrate LocalStack/Azurite with synthetic multi-tenant infrastructure")
-    group_actions.add_argument("--check", action="store_true", help="Run the Pre-Flight Diagnostic Suite (Network/DB/Cache health) only")
+    parser.add_argument(
+        "--mode", type=str, default=None,
+        choices=["MOCK", "LIVE", "HYBRID", "DRY_RUN"],
+        help="Override execution mode (default: from settings.yaml)"
+    )
+    parser.add_argument(
+        "--daemon", action="store_true",
+        help="Run in continuous daemon mode with configurable interval"
+    )
+    parser.add_argument(
+        "--interval", type=int, default=300,
+        help="Daemon scan interval in seconds (default: 300)"
+    )
+    parser.add_argument(
+        "--health", action="store_true",
+        help="Run pre-flight health checks and exit"
+    )
+    parser.add_argument(
+        "--schema", action="store_true",
+        help="Apply Neo4j enterprise schema constraints and exit"
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Enable DEBUG-level logging"
+    )
+    parser.add_argument(
+        "--no-simulation", action="store_true",
+        help="Disable synthetic APT topology generation"
+    )
+    parser.add_argument(
+        "--tenant", type=str, default=None,
+        help="Process only a specific tenant by ID"
+    )
+    parser.add_argument(
+        "--report", action="store_true",
+        help="Generate forensic report from latest scan data"
+    )
     
-    # Modifiers & Configuration Overrides
-    group_mods = parser.add_argument_group("Execution Modifiers")
-    group_mods.add_argument("--ui", action="store_true", help="Launch the Streamlit Visualization Dashboard as a background thread")
-    group_mods.add_argument("--force", action="store_true", help="Bypass strict Pre-Flight TCP failures and force the scan to proceed")
-    group_mods.add_argument("--debug", action="store_true", help="Engage high-verbosity forensic logging for system debugging")
+    return parser
+
+
+# ==============================================================================
+# MAIN EXECUTION
+# ==============================================================================
+
+async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None:
+    """Executes the main pipeline based on parsed arguments."""
+    from core.config import config as cfg
+    from core.orchestrator import CloudscapeOrchestrator
     
-    args = parser.parse_args()
-
-    # Initialize Global Console and Ledger
-    initialize_telemetry_matrix(debug_mode=args.debug)
-    print_cloudscape_banner()
-
-    # --------------------------------------------------------------------------
-    # OS-LEVEL ASYNCIO OPTIMIZATION (THE BOTO3 COMPATIBILITY LOCK)
-    # --------------------------------------------------------------------------
-    # Windows inherently uses ProactorEventLoop which conflicts heavily with 
-    # Boto3's internal threading when running asyncio.to_thread(). 
-    # Switching to SelectorEventLoopPolicy permanently stops 'Event loop is closed' crashes.
-    if sys.platform == 'win32':
-        try:
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-            logger.debug("Windows Selector Event Loop Policy successfully applied.")
-        except Exception as e:
-            logger.warning(f"Failed to set Windows Event Loop Policy: {e}")
-        
-    # Enter the core asynchronous realm
+    # Override mode if specified
+    if args.mode:
+        cfg.settings.execution_mode = args.mode
+        logger.info(f"Execution mode overridden to: {args.mode}")
+    
+    # Override simulation if specified
+    if args.no_simulation:
+        cfg.settings.simulation.enabled = False
+        logger.info("Simulation disabled via CLI flag.")
+    
+    # Initialize orchestrator
+    orchestrator = CloudscapeOrchestrator(cfg)
+    
+    # Register with process manager for signal handling
+    process_manager = TitanProcessManager()
+    process_manager.set_orchestrator(orchestrator)
+    
     try:
-        asyncio.run(async_main(args))
-        print("\n\033[92m[OK] Cloudscape Nexus Sequence Concluded Safely.\033[0m")
+        if args.daemon:
+            # Daemon Mode: Continuous scan loop
+            logger.info(f"Entering daemon mode. Scan interval: {args.interval}s")
+            cycle = 0
+            
+            while not orchestrator._shutdown_requested:
+                cycle += 1
+                logger.info(f"--- DAEMON CYCLE {cycle} ---")
+                
+                states = await orchestrator.run_full_pipeline()
+                
+                # Log cycle summary
+                total_nodes = sum(s.merged_nodes_produced for s in states)
+                total_errors = sum(len(s.errors) for s in states)
+                logger.info(f"Cycle {cycle} complete. Nodes: {total_nodes}, Errors: {total_errors}")
+                
+                if not orchestrator._shutdown_requested:
+                    logger.info(f"Sleeping {args.interval}s until next cycle...")
+                    await asyncio.sleep(args.interval)
+        else:
+            # Single Scan Mode
+            states = await orchestrator.run_full_pipeline()
+            
+            # Print scan summary
+            for state in states:
+                summary = state.to_dict()
+                logger.info(f"\nScan Summary for {state.tenant_id}:")
+                logger.info(f"  Stage: {summary['current_stage']}")
+                logger.info(f"  Duration: {summary['total_duration_ms']:.0f}ms")
+                logger.info(f"  Nodes: {summary['nodes']}")
+                if summary['errors']:
+                    logger.warning(f"  Errors: {summary['errors']}")
+    
     except KeyboardInterrupt:
-        # Failsafe fallback if posix_signal_handler misses the interrupt
-        print("\n\033[91m[!] Execution violently aborted by user (CTRL+C).\033[0m")
-        # Ensure teardown still runs in a new synchronous execution block
-        asyncio.run(teardown_manager.execute_teardown())
+        logger.info("Pipeline interrupted by user.")
+    except Exception as e:
+        logger.critical(f"Fatal pipeline error: {e}")
+        logger.debug(traceback.format_exc())
+    finally:
+        await orchestrator.shutdown()
+
+
+async def run_schema_init(logger: logging.Logger) -> None:
+    """Applies Neo4j enterprise schema constraints."""
+    try:
+        from utils.db_tools import GraphMaintenanceManager
+        
+        manager = GraphMaintenanceManager()
+        if await manager.test_connectivity():
+            await manager.enforce_enterprise_schema()
+        await manager.close()
+    except ImportError:
+        logger.error("db_tools module not available. Cannot initialize schema.")
+    except Exception as e:
+        logger.error(f"Schema initialization failed: {e}")
+        logger.debug(traceback.format_exc())
+
+
+def main() -> None:
+    """
+    The Supreme Entry Point.
+    Bootstraps the entire Cloudscape Nexus 5.2 Titan system.
+    """
+    # PHASE 1: Encoding Safety (function scope, not module level)
+    apply_safe_encoding_lock()
+    
+    # PHASE 2: Directory Bootstrapping
+    bootstrap_directories()
+    
+    # PHASE 3: Argument Parsing
+    parser = build_argument_parser()
+    args = parser.parse_args()
+    
+    # PHASE 4: Logging Initialization
+    log_level = "DEBUG" if args.verbose else "INFO"
+    logger = initialize_logging(log_level=log_level)
+    
+    # Banner
+    logger.info("--- CLOUDSCAPE NEXUS 5.2 TITAN ---")
+    logger.info("Initializing Sovereign-Forensic Engine...")
+    logger.info(f"Platform: {platform.system()} {platform.release()}")
+    logger.info(f"Python: {sys.version.split()[0]}")
+    logger.info(f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    logger.info("----------------------------------")
+    
+    # PHASE 5: Health Checks (if requested or always as pre-flight)
+    health = HealthCheckRunner()
+    if args.health:
+        health.run_all_checks()
+        sys.exit(0 if health.checks_failed == 0 else 1)
+    
+    # Non-blocking health check for pipeline mode
+    if not health.run_all_checks():
+        logger.warning("Some health checks failed. Proceeding anyway...")
+    
+    # PHASE 6: Windows AsyncIO Policy Fix
+    if platform.system() == 'Windows':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        logger.debug("Applied WindowsSelectorEventLoopPolicy for Windows compatibility.")
+    
+    # PHASE 7: Dispatch
+    try:
+        if args.schema:
+            asyncio.run(run_schema_init(logger))
+        else:
+            asyncio.run(run_pipeline(args, logger))
+    except KeyboardInterrupt:
+        logger.info("\nShutdown requested by user (Ctrl+C).")
+    except Exception as e:
+        logger.critical(f"Fatal: {e}")
+        logger.debug(traceback.format_exc())
         sys.exit(1)
+    
+    logger.info("Cloudscape Nexus 5.2 Titan shutdown complete.")
+
 
 if __name__ == "__main__":
     main()

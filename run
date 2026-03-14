@@ -7,7 +7,15 @@ $env:AWS_SECRET_ACCESS_KEY="testing"
 $env:AWS_DEFAULT_REGION="us-east-1"
 
 git add .
-git commit -m "Titan 5.0.1 | Stability Patch | Gatekeeper Stagger Implemented | Dynamic Resolver Active | State: Pre-Path-Discovery"
+git commit -m "Refactor: Overhaul backend architecture, logging, and infrastructure ingestion
+
+- **Configuration & Core:** Updated Pydantic models in [core/config.py](cci:7://file:///d:/Cloudscape_Project/core/config.py:0:0-0:0) to ignore extra fields (`provider`, [tags](cci:1://file:///d:/Cloudscape_Project/engines/hybrid_bridge.py:167:4-186:25)) and added `aws_default_region` validation aliases. Made `config_loader.py` platform-agnostic. Added missing simulation options to `settings.yaml`. Fixed `asyncio` deprecation warnings in the orchestrator.
+- **Enterprise Logging:** Implemented centralized, structured JSON/colored logging in [utils/logger.py](cci:7://file:///d:/Cloudscape_Project/utils/logger.py:0:0-0:0). Scrubbed intrusive emojis, split-columns, and thick ASCII borders across [main.py](cci:7://file:///d:/Cloudscape_Project/main.py:0:0-0:0), [orchestrator.py](cci:7://file:///d:/Cloudscape_Project/core/orchestrator.py:0:0-0:0), [mesh_seeder.py](cci:7://file:///d:/Cloudscape_Project/utils/mesh_seeder.py:0:0-0:0), [state_factory.py](cci:7://file:///d:/Cloudscape_Project/simulation/state_factory.py:0:0-0:0), and [hybrid_bridge.py](cci:7://file:///d:/Cloudscape_Project/engines/hybrid_bridge.py:0:0-0:0) for a tight, professional metric stream. Fixed a fatal `target_name` attribute bug in pipeline logging.
+- **Graph Database Integrity:** Fixed critical Neo4j `ConstraintValidationFailed` duplication errors. Adjusted cypher queries in [orchestrator.py](cci:7://file:///d:/Cloudscape_Project/core/orchestrator.py:0:0-0:0) and [mesh_seeder.py](cci:7://file:///d:/Cloudscape_Project/utils/mesh_seeder.py:0:0-0:0) to correctly `MERGE` on the constrained `:Resource` label before appending the `:CloudResource` label.
+- **AWS Engine & Discovery:** Replaced static LocalStack environment assumptions with dynamic `/_localstack/health` endpoint probing, permanently fixing `sqs` retry storms. Created the missing [registry/aws_services.json](cci:7://file:///d:/Cloudscape_Project/registry/aws_services.json:0:0-0:0) to enable fully dynamic Boto3 SDK method mapping.
+- **Dependency Management:** Completely updated [requirements.txt](cci:7://file:///d:/Cloudscape_Project/requirements.txt:0:0-0:0) to include missing libraries and lock down strict versions for the active environment (including `pydantic`, `pyvis`, [rich](cci:1://file:///d:/Cloudscape_Project/engines/aws_engine.py:557:4-608:20), `streamlit`, and the full `azure-mgmt-*` suite).
+- **Environment Tooling:** Added Windows `asyncio` loop policies to prevent closed-loop crashes in [visibility_debugger.py](cci:7://file:///d:/Cloudscape_Project/utils/visibility_debugger.py:0:0-0:0). Upgraded `soft_reset.py` to seamlessly support both Docker Compose V1 and V2.
+"
 
 git branch -M main
 git push -u origin main

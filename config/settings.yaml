@@ -11,7 +11,7 @@
 # ------------------------------------------------------------------------------
 app_metadata:
   name: "Cloudscape Nexus Titan"
-  version: "5.0.1"
+  version: "5.2.0"
   author: "Aether Engine"
   description: "Enterprise Multi-Cloud Graph Discovery & Intelligence Fabric"
   environment: "MOCK"
@@ -102,6 +102,9 @@ simulation:
   vulnerability_density: 0.4
   vulnerability_injection_rate: 0.05
   base_node_multiplier: 50
+  intensity_scale: 10
+  noise_ratio: 5.0
+  deterministic_seed: 42
 
 crawling:
   depth: 3

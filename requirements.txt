@@ -1,5 +1,5 @@
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 - ENTERPRISE DEPENDENCIES
+# CLOUDSCAPE NEXUS 5.2 TITAN - ENTERPRISE DEPENDENCIES
 # ==============================================================================
 # This file defines the strict cryptographic, network, and cloud-provider 
 # SDK versions required to operate the multi-cloud graph extraction mesh.
@@ -10,24 +10,25 @@
 # ------------------------------------------------------------------------------
 # FIXED: Strictly defining cryptography versions to prevent the 'x509' Rust 
 # binding conflict with Azure SDKs during deep environment scans.
-cryptography>=42.0.5
-pyOpenSSL>=24.0.0
+cryptography>=46.0.0
+pyOpenSSL>=25.3.0
 certifi>=2024.2.2
 
 # ------------------------------------------------------------------------------
 # 2. GRAPH DATABASE & INTELLIGENCE MATRICES
 # ------------------------------------------------------------------------------
 # neo4j: Powers the async Bolt protocol for the Materialization Ingestor
-# networkx: Powers the Heuristic Attack Path Discovery (HAPD) engine
+# networkx + pyvis: Powers the Heuristic Attack Path Discovery (HAPD) engine
 neo4j>=5.17.0
 networkx>=3.2.1
+pyvis>=0.3.2
 
 # ------------------------------------------------------------------------------
 # 3. STATE MANAGEMENT & CONCURRENCY
 # ------------------------------------------------------------------------------
 # redis: Powers the differential state hashing and cache backends
 # aiohttp: Mandatory underlying async web transport for Azure
-redis>=5.0.1
+redis>=7.2.0
 aiohttp>=3.9.3
 aiosignal>=1.3.1
 
@@ -43,16 +44,32 @@ s3transfer>=0.10.0
 # 5. AZURE MANAGEMENT & DISCOVERY SDKS
 # ------------------------------------------------------------------------------
 # Highly specific ARM (Azure Resource Manager) libraries required for Path B
-azure-core>=1.30.0
-azure-identity>=1.15.0
+azure-core>=1.38.0
+azure-identity>=1.25.0
 azure-storage-blob>=12.19.0
-azure-mgmt-resource>=23.0.1
-azure-mgmt-compute>=30.0.0
-azure-mgmt-network>=25.0.0
+azure-mgmt-resource>=25.0.0
+azure-mgmt-compute>=37.0.0
+azure-mgmt-network>=30.0.0
+azure-mgmt-containerservice>=40.0.0
+azure-mgmt-cosmosdb>=9.0.0
+azure-mgmt-keyvault>=10.0.0
+azure-mgmt-sql>=3.0.0
 
 # ------------------------------------------------------------------------------
 # 6. CONFIGURATION & SERIALIZATION
 # ------------------------------------------------------------------------------
-# PyYAML: Parses the tenants.yaml and settings.yaml configurations
 PyYAML>=6.0.1
 python-dateutil>=2.9.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+python-dotenv>=1.0.0
+
+# ------------------------------------------------------------------------------
+# 7. TERMINAL, LOGGING, & DASHBOARD
+# ------------------------------------------------------------------------------
+rich>=13.9.0
+colorama>=0.4.6
+streamlit>=1.32.0
+pandas>=2.2.0
+plotly>=5.19.0
+altair>=5.5.0

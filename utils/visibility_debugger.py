@@ -108,4 +108,7 @@ async def debug_environment():
     print("="*80 + "\n")
 
 if __name__ == "__main__":
+    # Handle Windows-specific Proactor event loop errors
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(debug_environment())

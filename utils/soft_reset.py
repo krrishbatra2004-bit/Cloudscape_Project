@@ -51,6 +51,7 @@ class EnvironmentSanitizer:
         self.print_banner()
         self.logger.info("Initiating Cloudscape Environment Sanitization Sequence...")
         
+        self._detect_docker_command()
         self._validate_crypto_stack()
         self._purge_python_caches()
         self._purge_forensic_logs()
@@ -61,6 +62,34 @@ class EnvironmentSanitizer:
         self.logger.info("======================================================")
         self.logger.info(" Sanitization Complete. The Mesh is Pristine and Ready.")
         self.logger.info("======================================================")
+
+    def _detect_docker_command(self):
+        """
+        Detects whether Docker is available and whether to use V2 
+        ('docker compose') or V1 ('docker-compose') syntax.
+        """
+        self.logger.info("Phase 0: Detecting Docker runtime...")
+        
+        # Check for Docker V2 first (preferred)
+        if shutil.which("docker"):
+            result = subprocess.run(
+                ["docker", "compose", "version"],
+                capture_output=True, text=True, shell=(sys.platform == 'win32')
+            )
+            if result.returncode == 0:
+                self._docker_cmd = ["docker", "compose"]
+                self.logger.info(f" -> Using Docker Compose V2: {result.stdout.strip()}")
+                return
+        
+        # Fallback to V1
+        if shutil.which("docker-compose"):
+            self._docker_cmd = ["docker-compose"]
+            self.logger.info(" -> Using Docker Compose V1 (legacy).")
+            return
+        
+        self.logger.error(" -> CRITICAL: Neither 'docker compose' nor 'docker-compose' found.")
+        self.logger.error("    Ensure Docker Desktop is installed and in your PATH.")
+        sys.exit(1)
 
     # --------------------------------------------------------------------------
     # 1. CRYPTOGRAPHIC DEPENDENCY VALIDATION
@@ -140,7 +169,7 @@ class EnvironmentSanitizer:
 
     def _teardown_docker_mesh(self):
         """
-        Executes docker-compose down with the -v flag. 
+        Executes docker compose down with the -v flag. 
         CRITICAL: The -v flag destroys named volumes, wiping Neo4j and LocalStack 
         databases to cure 'Ghost Tenant' state poisoning.
         """
@@ -152,12 +181,12 @@ class EnvironmentSanitizer:
         try:
             # -v removes volumes, --remove-orphans cleans up unlinked containers
             result = subprocess.run(
-                ["docker-compose", "down", "-v", "--remove-orphans"], 
+                self._docker_cmd + ["down", "-v", "--remove-orphans"], 
                 cwd=self.project_root, 
                 check=True,
                 capture_output=True,
                 text=True,
-                shell=True
+                shell=(sys.platform == 'win32')
             )
             self.logger.info(" -> Mesh topology destroyed. Volumes sanitized.")
             self.logger.debug(f"Docker teardown output:\n{result.stdout}")
@@ -170,12 +199,12 @@ class EnvironmentSanitizer:
         self.logger.info("Phase 5: Rebuilding Cloudscape Docker Mesh...")
         try:
             result = subprocess.run(
-                ["docker-compose", "up", "-d"], 
+                self._docker_cmd + ["up", "-d"], 
                 cwd=self.project_root, 
                 check=True,
                 capture_output=True,
                 text=True,
-                shell=True
+                shell=(sys.platform == 'win32')
             )
             self.logger.info(" -> Containers spawned. Awaiting OS process binding...")
             self.logger.debug(f"Docker build output:\n{result.stdout}")
