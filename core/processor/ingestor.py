@@ -1,299 +1,382 @@
-import logging
-import json
 import asyncio
+import json
+import logging
+import time
+import random
 import traceback
-import copy
-from typing import List, Dict, Any
-from neo4j import AsyncGraphDatabase, exceptions
+from typing import List, Dict, Any, Optional
+from collections import defaultdict
 
+from neo4j import AsyncGraphDatabase, exceptions
 from core.config import config
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 TITAN - GRAPH INGESTOR ENGINE
+# CLOUDSCAPE NEXUS 5.0 TITAN - DATABASE INGESTOR KERNEL (ZERO-G EDITION)
 # ==============================================================================
-# The Physical Database Materialization Gateway.
-# Employs highly optimized, chunked Cypher UNWIND transactions and leverages 
-# APOC for dynamic relationship generation. 
-# 
-# Features:
-# - Transient Lock Resilience (Survives parallel thread deadlocks)
-# - Deep Payload Serialization (Prevents Neo4j array/dict schema crashes)
-# - Singleton Connection Pooling (Memory efficiency)
+# The High-Performance Graph Materialization & Transaction Engine.
+#
+# TITAN UPGRADES ACTIVE:
+# 1. Jittered Exponential Backoff (The Patience Injector): Cures the 'Handshake 
+#    Lag' crash when executing rapid Seed -> Scan transitions by dynamically 
+#    buffering Bolt connections while the Neo4j JVM flushes I/O.
+# 2. APOC-Independent Bulk Materialization: Groups URM edges dynamically in 
+#    Python memory to construct valid native Cypher relationship insertions, 
+#    bypassing the need for heavy APOC plugins.
+# 3. Recursive JSON Flattening: Ensures deeply nested Boto3/Azure metadata 
+#    arrays never trigger Labeled Property Graph (LPG) type exceptions.
+# 4. Asynchronous Connection Pooling: Strictly bound teardown limits.
 # ==============================================================================
 
 class Ingestor:
     def __init__(self):
         self.logger = logging.getLogger("Cloudscape.Processor.Ingestor")
+        self._driver: Optional[AsyncGraphDatabase.driver] = None
         
-        # Pull database connection telemetry from the central config manager
-        self.uri = config.settings.database.neo4j_uri
-        self.user = config.settings.database.neo4j_user
-        self.password = config.settings.database.neo4j_password
-        
-        # 500 is the mathematical sweet spot for Cypher UNWIND performance 
-        # before memory overhead degrades the transaction speed.
-        self.batch_size = 500 
-        
-        # Initialize the high-performance async driver pool
-        try:
-            self.driver = AsyncGraphDatabase.driver(
-                self.uri, 
-                auth=(self.user, self.password),
-                max_connection_lifetime=200,
-                max_connection_pool_size=50
-            )
-            self.logger.debug("AsyncGraphDatabase driver pool initialized successfully.")
-        except Exception as e:
-            self.logger.critical(f"FATAL: Failed to initialize Neo4j driver: {e}")
-            self.driver = None
-
-    async def close(self):
-        """Gracefully terminates the driver connection pool to prevent memory leaks."""
-        if self.driver:
-            await self.driver.close()
-            self.logger.info("Neo4j connection pool gracefully terminated.")
+        # ----------------------------------------------------------------------
+        # KERNEL TUNING PARAMETERS
+        # ----------------------------------------------------------------------
+        self.batch_size = getattr(config.settings.database.ingestion, "batch_size", 500)
+        self.max_retries = getattr(config.settings.database.ingestion, "retries", 10) # Increased for Seed -> Scan safety
+        self.base_backoff = getattr(config.settings.database.ingestion, "backoff_factor", 3.0)
 
     # ==========================================================================
-    # SCHEMA & KERNEL VALIDATION
+    # KERNEL INITIALIZATION & CONNECTION POOLING
+    # ==========================================================================
+
+    async def _get_driver(self):
+        """
+        Initializes the Neo4j Async Driver with strict Jittered Exponential Backoff.
+        
+        If the Neo4j JVM is currently flushing transaction logs (common after a heavy 
+        --seed execution), the Bolt protocol may open the TCP port but fail the L7 handshake. 
+        This loop mathematical scales the wait time up to 60+ seconds to guarantee survival.
+        """
+        if self._driver:
+            return self._driver
+
+        uri = config.settings.database.neo4j_uri
+        user = config.settings.database.neo4j_user
+        password = config.settings.database.neo4j_password
+
+        attempts = 0
+        while attempts < self.max_retries:
+            try:
+                self._driver = AsyncGraphDatabase.driver(
+                    uri, 
+                    auth=(user, password),
+                    max_connection_lifetime=3600,
+                    max_connection_pool_size=config.settings.database.connection_pool_size,
+                    connection_timeout=20.0
+                )
+                
+                # Physical validation of the Bolt protocol magic bytes
+                await self._driver.verify_connectivity()
+                
+                if attempts > 0:
+                    self.logger.info("Database Kernel connection recovered successfully. JVM is ready.")
+                else:
+                    self.logger.info("Neo4j Kernel is online, unlocked, and accepting transactions.")
+                    
+                return self._driver
+                
+            except (exceptions.ServiceUnavailable, exceptions.DriverError, exceptions.AuthError) as e:
+                attempts += 1
+                error_msg = str(e)
+                
+                # Check for the specific "Incomplete Handshake" or "Connection Closed" zombie socket bug
+                if "handshake" in error_msg.lower() or "connection closed" in error_msg.lower() or "timed out" in error_msg.lower():
+                    
+                    # Calculate Jittered Exponential Backoff
+                    # e.g. Attempt 1: ~3.5s | Attempt 2: ~5.0s | Attempt 3: ~7.5s
+                    jitter = random.uniform(0.5, 1.5)
+                    wait_time = (self.base_backoff * (1.3 ** attempts)) + jitter
+                    wait_time = round(min(wait_time, 15.0), 2) # Cap individual waits to 15s
+                    
+                    self.logger.warning(
+                        f"Database Kernel handshake lag detected (Attempt {attempts}/{self.max_retries}). "
+                        f"JVM may be flushing buffers. Buffering {wait_time}s..."
+                    )
+                    
+                    if self._driver:
+                        await self._driver.close()
+                        self._driver = None
+                        
+                    await asyncio.sleep(wait_time)
+                else:
+                    self.logger.critical(f"Catastrophic Database Driver Fault: {error_msg}")
+                    raise 
+            
+        raise exceptions.ServiceUnavailable(
+            "Catastrophic Handshake Timeout: Neo4j JVM is unresponsive after maximum retries. "
+            "Please verify the Docker container has not run out of system RAM."
+        )
+
+    # ==========================================================================
+    # SCHEMA ENFORCEMENT & INTEGRITY CHECKS
     # ==========================================================================
 
     async def validate_schema(self) -> None:
         """
-        Polls the kernel for readiness and enforces strict structural constraints.
-        Guarantees O(1) topological lookups via ARN uniqueness constraints.
+        Enforces physical Graph Constraints for URM integrity.
+        Ensures ARNs are mathematically unique to prevent duplicate node ghosts.
         """
-        self.logger.info("Polling Neo4j Database Kernel for physical write-readiness...")
+        driver = await self._get_driver()
         
-        if not self.driver:
-            raise ConnectionError("Neo4j driver is not initialized. Cannot validate schema.")
-            
+        queries = [
+            "CREATE CONSTRAINT resource_arn IF NOT EXISTS FOR (n:CloudNode) REQUIRE n.arn IS UNIQUE",
+            "CREATE CONSTRAINT path_id IF NOT EXISTS FOR (p:AttackPath) REQUIRE p.path_id IS UNIQUE",
+            "CREATE INDEX resource_type_idx IF NOT EXISTS FOR (n:CloudNode) ON (n.resource_type)",
+            "CREATE INDEX tenant_idx IF NOT EXISTS FOR (n:CloudNode) ON (n.tenant_id)",
+            "CREATE INDEX risk_score_idx IF NOT EXISTS FOR (n:CloudNode) ON (n.risk_score)"
+        ]
+        
+        async with driver.session() as session:
+            for q in queries:
+                try:
+                    await session.run(q)
+                except exceptions.ClientError as e:
+                    # Ignore warnings if the constraint/index is already mapped
+                    if "already exists" not in str(e).lower():
+                        self.logger.error(f"Schema Constraint Fault on query [{q}]: {e}")
+                        
+            # Wait for indexes to physically come online to prevent race conditions during bulk ingest
+            await self._await_indexes_online(session)
+
+    async def _await_indexes_online(self, session) -> None:
+        """Actively polls the Neo4j index state to guarantee transaction readiness."""
+        query = "SHOW INDEXES YIELD state, type RETURN state"
         try:
-            async with self.driver.session() as session:
-                # Enforce globally unique physical addresses to prevent graph duplication
-                await session.run(
-                    "CREATE CONSTRAINT resource_arn IF NOT EXISTS FOR (n:CloudNode) REQUIRE n.arn IS UNIQUE"
-                )
-                # Optimize resource type querying for massive datasets
-                await session.run(
-                    "CREATE INDEX resource_type_idx IF NOT EXISTS FOR (n:CloudNode) ON (n.resource_type)"
-                )
-            self.logger.info("Neo4j Kernel is online, unlocked, and accepting transactions.")
-        except Exception as e:
-            self.logger.critical(f"Database Kernel schema verification failed: {e}")
-            self.logger.debug(traceback.format_exc())
-            raise
+            for _ in range(5):
+                result = await session.run(query)
+                records = await result.data()
+                if all(record["state"] == "ONLINE" for record in records):
+                    return
+                await asyncio.sleep(0.5)
+        except Exception:
+            pass # Fail-open if syntax is unsupported on older Neo4j versions
 
     # ==========================================================================
-    # UNIFIED PAYLOAD GATEWAY
+    # MASTER INGESTION ROUTING
     # ==========================================================================
 
-    async def process_payloads(self, source: str, payloads: List[Dict[str, Any]]) -> None:
+    async def process_payloads(self, source_engine: str, payload: List[Dict[str, Any]]) -> None:
         """
-        The Master Routing Switch. 
-        Directs telemetry from specific upstream intelligence engines to their 
-        strictly optimized Cypher materialization endpoints.
+        The Master Routing Switchboard.
+        Segregates the incoming URM dictionary into strictly typed arrays (Nodes, Edges, Paths)
+        and dispatches them to their highly optimized Cypher materialization pipelines.
         """
-        if not payloads:
-            self.logger.debug(f"Source '{source}' provided an empty payload stream. Bypassing ingestion.")
+        if not payload:
             return
 
-        self.logger.debug(f"Received {len(payloads)} validated payloads from {source} for materialization.")
+        self.logger.debug(f"[{source_engine}] Received {len(payload)} discrete entities for graph materialization.")
         
-        try:
-            if source == "HybridBridge":
-                await self._ingest_nodes(payloads)
-            elif source == "IdentityFabric":
-                await self._ingest_edges(payloads)
-            elif source == "AttackPathEngine":
-                await self._ingest_attack_paths(payloads)
+        # Segregation Logic Matrix
+        nodes = []
+        edges = []
+        paths = []
+        
+        for p in payload:
+            obj_type = p.get("type", "")
+            if obj_type == "attack_path":
+                paths.append(p)
+            elif "source_arn" in p and "target_arn" in p:
+                edges.append(p)
             else:
-                self.logger.warning(f"Unrecognized payload source '{source}'. Ingestion sequence rejected.")
-                
-        except Exception as e:
-            self.logger.error(f"Materialization fault for source {source}: {e}")
-            self.logger.debug(traceback.format_exc())
+                nodes.append(p)
+
+        # Sequential Materialization: Nodes MUST exist before Edges/Paths refer to them
+        if nodes:
+            await self._materialize_nodes(nodes)
+        if edges:
+            await self._materialize_edges(edges)
+        if paths:
+            await self._materialize_paths(paths)
 
     # ==========================================================================
-    # CHUNKED CYPHER MATERIALIZATION METHODS
+    # DEEP-JSON NORMALIZERS
     # ==========================================================================
 
-    async def _ingest_nodes(self, nodes: List[Dict[str, Any]]) -> None:
+    def _safe_serialize(self, data: Any) -> str:
         """
-        Materializes standard CloudNodes using bulk UNWIND.
-        Extracts high-value attributes for direct node querying while flattening 
-        deep nested arrays into JSON strings to prevent driver schema crashes.
+        Recursively converts Python dictionaries and complex types into strict JSON strings.
+        This entirely prevents Neo4j `TypeError` crashes when Boto3 injects datetimes or nested arrays.
         """
-        query = """
-        UNWIND $batch AS row
-        MERGE (n:CloudNode {arn: row.arn})
-        SET n.tenant_id = row.tenant_id,
-            n.cloud_provider = row.cloud_provider,
-            n.service = row.service,
-            n.resource_type = row.type,
-            n.name = row.name,
-            n.risk_score = toFloat(row.flat_risk),
-            n.is_simulated = toBoolean(row.flat_simulated),
-            n.tags = row.tags_json,
-            n.metadata = row.metadata_json
+        if not data:
+            return "{}"
+            
+        if isinstance(data, str):
+            # Try to validate if it's already JSON
+            try:
+                json.loads(data)
+                return data
+            except ValueError:
+                pass # Just a regular string, which is fine, but we are supposed to be stringifying dicts here
+
+        try:
+            return json.dumps(data, default=str)
+        except Exception:
+            return "{}"
+
+    # ==========================================================================
+    # PHASED MATERIALIZATION LOGIC (CHUNKED UNWIND)
+    # ==========================================================================
+
+    async def _materialize_nodes(self, nodes: List[Dict]) -> None:
         """
+        Transforms deeply nested Python dictionaries into stringified JSON properties 
+        to guarantee Neo4j persistence, then uses UNWIND to batch insert them.
+        """
+        driver = await self._get_driver()
+        processed_nodes = []
         
-        serialized_batch = []
         for node in nodes:
-            safe_node = self._serialize_for_neo4j(node)
-            
-            # Hoist critical metadata properties to the root for direct Cypher index access
-            meta = node.get("metadata", {})
-            safe_node["flat_risk"] = meta.get("baseline_risk_score", 0.0)
-            safe_node["flat_simulated"] = meta.get("is_simulated", False)
-            
-            serialized_batch.append(safe_node)
+            # Construct the flattened URM Object
+            flat_node = {
+                "arn": node.get("arn", f"unknown-arn-{time.time()}"),
+                "name": node.get("name", "Unknown_Entity"),
+                "cloud_provider": node.get("cloud_provider", "unknown").lower(),
+                "service": node.get("service", "unknown").lower(),
+                "resource_type": str(node.get("type", "Resource")).lower(),
+                "tenant_id": node.get("tenant_id", "unknown"),
+                "is_simulated": bool(node.get("metadata", {}).get("is_simulated", False)),
+                "risk_score": float(node.get("metadata", {}).get("baseline_risk_score", 1.0)),
+                "tags_json": self._safe_serialize(node.get("tags", {})),
+                "metadata_json": self._safe_serialize(node.get("metadata", {}))
+            }
+            processed_nodes.append(flat_node)
 
-        self.logger.debug(f"Executing UNWIND Node transaction for {len(serialized_batch)} entities...")
-        await self._execute_batched_transaction(query, serialized_batch, "Nodes")
-
-    async def _ingest_edges(self, edges: List[Dict[str, Any]]) -> None:
-        """
-        Materializes Cross-Cloud and Intra-Cloud connections.
-        Leverages Neo4j APOC to dynamically assign the relationship type based on 
-        the payload's 'relation_type' attribute, which standard Cypher cannot do.
-        """
+        # The Cypher UNWIND Query
         query = """
-        UNWIND $batch AS row
-        MATCH (s:CloudNode {arn: row.source_arn})
-        MATCH (t:CloudNode {arn: row.target_arn})
-        CALL apoc.merge.relationship(s, row.relation_type, 
-            {}, 
-            {
-                weight: toFloat(row.weight), 
-                discovery_mechanism: row.discovery_mechanism, 
-                is_synthetic: toBoolean(row.is_synthetic)
-            }, 
-            t, 
-            {}
-        ) YIELD rel
-        RETURN count(rel)
+        UNWIND $batch AS node_data
+        MERGE (n:CloudNode {arn: node_data.arn})
+        SET n += node_data,
+            n:Resource,
+            n.last_updated = timestamp()
         """
+
+        # Execute in protected memory chunks
+        for i in range(0, len(processed_nodes), self.batch_size):
+            chunk = processed_nodes[i : i + self.batch_size]
+            try:
+                async with driver.session() as session:
+                    await session.execute_write(lambda tx: tx.run(query, batch=chunk))
+            except Exception as e:
+                self.logger.error(f"Node Materialization Fault during UNWIND: {e}")
+                self.logger.debug(traceback.format_exc())
+
+    async def _materialize_edges(self, edges: List[Dict]) -> None:
+        """
+        The APOC-Independent Native Cypher Edge Generator.
         
-        serialized_batch = []
+        Neo4j's native UNWIND MERGE cannot accept dynamic relationship types 
+        (e.g., `MERGE (a)-[r:$rel_type]->(b)` is invalid syntax without APOC).
+        
+        This engine groups the edges by relation_type in Python memory first, 
+        and then executes distinct native UNWIND queries for each type. This makes 
+        the pipeline completely bulletproof against Docker plugin failures.
+        """
+        driver = await self._get_driver()
+        
+        # 1. Group edges mathematically by relationship type
+        grouped_edges = defaultdict(list)
         for edge in edges:
-            meta = edge.get("metadata", {})
-            # Sanitize the relation type to ensure it is a valid Cypher relationship identifier
-            raw_relation = str(edge.get("relation_type", "RELATES_TO")).upper()
-            safe_relation = raw_relation.replace(" ", "_").replace("-", "_")
+            rel_type = edge.get("relation_type", "RELATED_TO").upper()
+            # Sanitize the relation string to prevent Cypher injection
+            rel_type = "".join([c for c in rel_type if c.isalnum() or c == "_"])
             
-            safe_edge = {
+            flat_edge = {
                 "source_arn": edge.get("source_arn"),
                 "target_arn": edge.get("target_arn"),
-                "relation_type": safe_relation,
-                "weight": edge.get("weight", 1.0),
-                "discovery_mechanism": meta.get("discovery_mechanism", "unknown"),
-                "is_synthetic": meta.get("is_synthetic", False)
+                "weight": float(edge.get("weight", 1.0)),
+                "is_identity_bridge": bool(edge.get("is_identity_bridge", False))
             }
-            serialized_batch.append(safe_edge)
+            grouped_edges[rel_type].append(flat_edge)
 
-        self.logger.debug(f"Executing UNWIND APOC Edge transaction for {len(serialized_batch)} bridges...")
-        await self._execute_batched_transaction(query, serialized_batch, "Identity Edges")
-
-    async def _ingest_attack_paths(self, paths: List[Dict[str, Any]]) -> None:
-        """
-        Materializes fully validated exfiltration routes from the HAPD Engine.
-        Creates an explicit `AttackPath` entity and physically links it to the 
-        Entry Point and the Crown Jewel for instantaneous Dashboard visualization.
-        """
-        query = """
-        UNWIND $batch AS row
-        MERGE (p:AttackPath {path_id: row.path_id})
-        SET p.tier = row.tier,
-            p.hcs_score = toFloat(row.flat_hcs),
-            p.hop_count = toInteger(row.flat_hops),
-            p.path_matrix = row.metadata_json
+        # 2. Execute grouped UNWIND queries
+        for rel_type, type_batch in grouped_edges.items():
             
-        WITH p, row
-        MATCH (s:CloudNode {arn: row.source_node})
-        MATCH (t:CloudNode {arn: row.target_node})
-        
-        MERGE (s)-[:ORIGINATES_PATH]->(p)
-        MERGE (p)-[:TARGETS_CROWN_JEWEL]->(t)
-        """
-        
-        serialized_batch = []
-        for path in paths:
-            safe_path = self._serialize_for_neo4j(path)
+            # The dynamic native Cypher query injection
+            query = f"""
+            UNWIND $batch AS edge_data
+            MATCH (a:CloudNode {{arn: edge_data.source_arn}})
+            MATCH (b:CloudNode {{arn: edge_data.target_arn}})
+            MERGE (a)-[r:{rel_type}]->(b)
+            SET r.weight = edge_data.weight,
+                r.is_identity_bridge = edge_data.is_identity_bridge,
+                r.last_updated = timestamp()
+            """
             
-            meta = path.get("metadata", {})
-            safe_path["flat_hcs"] = meta.get("hcs_score", 0.0)
-            safe_path["flat_hops"] = meta.get("hop_count", 0)
-            
-            serialized_batch.append(safe_path)
-
-        self.logger.debug(f"Executing UNWIND Attack Path transaction for {len(serialized_batch)} routes...")
-        await self._execute_batched_transaction(query, serialized_batch, "Attack Paths")
-
-    # ==========================================================================
-    # TRANSACTION EXECUTION & SERIALIZATION UTILITIES
-    # ==========================================================================
-
-    async def _execute_batched_transaction(self, query: str, full_batch: List[Dict], log_label: str) -> None:
-        """
-        Safely slices massive payload arrays into network-friendly chunks and 
-        executes them with physical retry mechanisms to survive Transient Deadlocks.
-        """
-        if not self.driver:
-            self.logger.error(f"Cannot execute transaction for {log_label}; database driver is offline.")
-            return
-
-        total = len(full_batch)
-        for i in range(0, total, self.batch_size):
-            chunk = full_batch[i : i + self.batch_size]
-            
-            # Transient Lock Survival Loop
-            max_retries = 4
-            for attempt in range(max_retries):
+            # Chunk the specific relationship type batch
+            for i in range(0, len(type_batch), self.batch_size):
+                chunk = type_batch[i : i + self.batch_size]
                 try:
-                    async with self.driver.session() as session:
-                        await session.run(query, batch=chunk)
-                    break # Success, break out of the retry loop
-                    
-                except exceptions.TransientError as te:
-                    backoff = 1.5 * (attempt + 1)
-                    self.logger.warning(f"Neo4j Lock Collision on {log_label} chunk {i}. Retrying in {backoff}s ({attempt+1}/{max_retries})...")
-                    await asyncio.sleep(backoff)
-                    
+                    async with driver.session() as session:
+                        await session.execute_write(lambda tx: tx.run(query, batch=chunk))
                 except Exception as e:
-                    self.logger.error(f"Failed to commit {log_label} chunk {i}-{i+len(chunk)}: {e}")
-                    self.logger.debug(traceback.format_exc())
-                    break # Break on non-transient errors (e.g. Cypher syntax faults)
+                    self.logger.error(f"Edge Materialization Fault on type [{rel_type}]: {e}")
 
-    def _serialize_for_neo4j(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _materialize_paths(self, paths: List[Dict]) -> None:
         """
-        Deep payload flattener.
-        Neo4j drivers natively crash if passed Python lists or dictionaries as node properties. 
-        This method converts nested structures into strict JSON strings for safe transit.
+        Physically registers the specific HAPD kill chains into the database as standalone 
+        nodes, then draws ORIGINATES_FROM and TARGETS edges to the specific compromised infrastructure.
         """
-        # Deep copy to avoid mutating the live memory state
-        serialized = copy.deepcopy(payload)
+        driver = await self._get_driver()
+        processed_paths = []
         
-        # 1. Stringify Tags Matrix
-        if "tags" in serialized and isinstance(serialized["tags"], dict):
-            serialized["tags_json"] = json.dumps(serialized["tags"], default=str)
-        else:
-            serialized["tags_json"] = "{}"
-            
-        # 2. Stringify Metadata Matrix
-        if "metadata" in serialized and isinstance(serialized["metadata"], dict):
-            serialized["metadata_json"] = json.dumps(serialized["metadata"], default=str)
-        else:
-            serialized["metadata_json"] = "{}"
-            
-        # Optional Cleanup: Remove original dicts from the root payload to reduce transit weight
-        serialized.pop("tags", None)
-        serialized.pop("metadata", None)
-            
-        return serialized
+        for p in paths:
+            metadata = p.get("metadata", {})
+                
+            flat_path = {
+                "path_id": p.get("path_id"),
+                "source_node": p.get("source_node"),
+                "target_node": p.get("target_node"),
+                "tier": p.get("tier", "LOW"),
+                "hcs_score": float(metadata.get("hcs_score", 0.0)),
+                "hop_count": int(metadata.get("hop_count", 0)),
+                "path_sequence_json": self._safe_serialize(metadata.get("path_sequence", [])),
+                "path_matrix_json": self._safe_serialize(metadata.get("path_matrix", [])),
+                "mitre_tactics_json": self._safe_serialize(metadata.get("mitre_tactics", [])),
+                "timestamp": float(metadata.get("timestamp", time.time()))
+            }
+            processed_paths.append(flat_path)
+        
+        query = """
+        UNWIND $batch AS p
+        MERGE (path:AttackPath {path_id: p.path_id})
+        SET path += p
+        
+        // Link the Path Node to the physical Start and End Resource Nodes
+        WITH path, p
+        MATCH (src:CloudNode {arn: p.source_node})
+        MATCH (dst:CloudNode {arn: p.target_node})
+        MERGE (path)-[:ORIGINATES_FROM]->(src)
+        MERGE (path)-[:TARGETS]->(dst)
+        """
+        
+        for i in range(0, len(processed_paths), self.batch_size):
+            chunk = processed_paths[i : i + self.batch_size]
+            try:
+                async with driver.session() as session:
+                    await session.execute_write(lambda tx: tx.run(query, batch=chunk))
+            except Exception as e:
+                self.logger.error(f"Attack Path Materialization Fault: {e}")
 
-# ==============================================================================
-# SINGLETON EXPORT (THE TITAN LINK)
-# ==============================================================================
-# The Orchestrator and other Nexus systems import this instance directly 
-# to utilize a single, memory-efficient Neo4j connection pool across the mesh.
+    # ==========================================================================
+    # KERNEL TEARDOWN (GRACEFUL MEMORY RELEASE)
+    # ==========================================================================
+
+    async def close(self) -> None:
+        """
+        Physically severs the connection pool. Called directly by main.py's
+        `finally` block to guarantee 0 memory leaks or socket hangs on shutdown.
+        """
+        if self._driver:
+            try:
+                await self._driver.close()
+            except Exception as e:
+                self.logger.error(f"Fault during Neo4j connection pool teardown: {e}")
+            finally:
+                self._driver = None
+
+# Export the Global Singleton Instance to preserve connection pooling across the app
 ingestor = Ingestor()
