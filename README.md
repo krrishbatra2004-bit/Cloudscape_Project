@@ -1,36 +1,63 @@
-# 🕸️ Project Cloudscape 2026
-**Enterprise Cloud Security Posture & Graph Correlation Fabric**
+# 🕸️ Project CloudScape 5.2 Titan
+**Sovereign-Forensic Multi-Cloud Intelligence Mesh**
 
-![Version](https://img.shields.io/badge/Version-2.0.0-00FF41)
+![Version](https://img.shields.io/badge/Version-5.2.0-00FF41)
 ![Status](https://img.shields.io/badge/Status-Production_Ready-blue)
-![Architecture](https://img.shields.io/badge/Architecture-Multi--Tenant-orange)
+![Architecture](https://img.shields.io/badge/Architecture-Decoupled_Microservices-orange)
 
 ## 📖 Executive Summary
-Project Cloudscape is a distributed, multi-tenant Cloud Detection and Response (CDR) engine. It abandons traditional linear scanning in favor of a **Recursive Graph-Correlation Fabric**. By leveraging asynchronous execution and Neo4j Cypher mapping, Cloudscape ingests multiple isolated cloud environments (AWS/Azure) and autonomously discovers hidden, cross-account attack paths—specifically Identity Trusts and VPC Peering vulnerabilities.
+Project CloudScape Titan is a highly distributed, multi-tenant Cloud Detection and Response (CDR) engine. Abandoning traditional linear scanning, it utilizes a **Recursive Graph-Correlation Fabric** backed by Neo4j. By concurrently ingesting multiple isolated cloud environments (AWS/Azure) directly or via emulators (LocalStack/Azurite), CloudScape intelligently discovers hidden, cross-account attack paths—specifically IAM Identity Trusts, VPC Peerings, and RBAC vulnerabilities.
 
 ## 🏗️ System Architecture & Topologies
-* **The Logic Tier (D: Drive):** Houses the Asynchronous Orchestrator, the dynamic Discovery Engines (AWS/Azure), and the Trust Resolver.
-* **The Forensic Tier (E: Drive):** A strictly namespaced, timestamped JSON data vault that caches immutable raw cloud state before graph ingestion.
-* **The Mesh Infrastructure:** A multi-container Docker deployment simulating an enterprise hub-and-spoke cloud model via LocalStack and Azurite.
+CloudScape is designed with strict separation of concerns, heavily prioritizing decoupled execution and modular scale.
+
+* **`frontend/`**: The modern User Interface layer (Managed by the Frontend/UI Team).
+* **`backend/`**: The Sovereign-Forensic Core Engine. Contains:
+  * **`src/core`**: Orchestration logic, unified configuration, and cross-project trust correlation.
+  * **`src/discovery`**: AWS and Azure asynchronous extraction engine implementations.
+  * **`src/intelligence`**: Graph mapping and algorithmic risk scoring capabilities.
+  * **`src/simulation`**: Synthetic APT state generation and enterprise LocalStack seeder.
+* **`scripts/`**: Advanced PowerShell orchestration tools for lifecycle, network diagnostics, and teardowns.
+* **The Forensic Vault**: Namespaced JSON data outputs logged in `backend/forensics/` serving as chronological, immutable traces.
+* **The Container Mesh**: A synchronized Docker deployment comprising `Neo4j`, `LocalStack`, `Redis`, and `MongoDB`.
 
 ---
 
-## ⚙️ Prerequisites & Installation
+## ⚙️ Prerequisites & Dependencies
 
-### 1. Core Dependencies
-* **Python 3.10+**
-* **Docker Desktop** (Engine v24.0+)
-* **Git**
+### 1. Core Systems
+* **Python 3.10+** (Recommend 3.12)
+* **Docker Engine** (Compose V2+)
+* **PowerShell 5.1+**
 
 ### 2. Environment Setup
-Clone the repository and install the strict dependency matrix:
-```bash
-# Navigate to the Project Root (D: Drive)
+Clone the repository and automatically spin up the ecosystem:
+
+```powershell
+# Navigate to the Project Root
 cd D:\Cloudscape_Project
 
-# Create and activate an isolated virtual environment
-python -m venv .venv
-.\.venv\Scripts\activate
+# Run the Master Launch Orchestrator (Creates .venv, installs dependencies, boots Docker, runs checks)
+.\scripts\launch_nexus.ps1
+```
 
-# Install Core Engines
-pip install -r requirements.txt
+## 🚀 Execution & Interaction
+
+CloudScape provides comprehensive run commands for any granular task. It operates via the `.ps1` wrapper scripts or via direct Python entry points. **For a full, exhaustive list of every possible execution command, please read the `run.txt` file located in the root directory.**
+
+### Quick-Start Guide
+1. Activate virtual environment: `.\.venv\Scripts\activate.ps1`
+2. Start the Graph & Emulators: `.\scripts\launch_nexus.ps1`
+3. Optional Graph Seeding: `python backend/scripts/mesh_seeder.py`
+4. Run standard forensic scan: `python backend/main.py --mode HYBRID`
+5. Shutdown the ecosystem safely: `.\scripts\soft_reset.ps1`
+
+## 🛡️ Operational Modes
+The `main.py` pipeline utilizes specific extraction logic based on the mode provided:
+- **`MOCK`**: Pure synthetic environment. Generates randomized local states without connecting to Docker. Fast unit testing.
+- **`LIVE`**: Pure production extraction. Connects directly to real AWS/Azure via identities. Highly sensitive.
+- **`HYBRID`**: Emulated local deployment. Connects to LocalStack/Azurite dockers. Perfect for testing exploits safely.
+
+---
+
+*Project Titan: "Visibility is absolute. Trust is an edge."*
