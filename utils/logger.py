@@ -23,73 +23,11 @@ from datetime import datetime, timezone
 # ==============================================================================
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ANSI COLOR CODES
-# ──────────────────────────────────────────────────────────────────────────────
+from rich.logging import RichHandler
+from rich.console import Console
 
-class _AnsiColors:
-    """ANSI escape codes for terminal coloring."""
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
-
-    # Log level colors
-    DEBUG = "\033[36m"       # Cyan
-    INFO = "\033[32m"        # Green
-    WARNING = "\033[33m"     # Yellow
-    ERROR = "\033[91m"       # Bright Red
-    CRITICAL = "\033[41m"    # Red Background
-
-    # Component colors
-    TIMESTAMP = "\033[90m"   # Grey
-    NAME = "\033[34m"        # Blue
-    MESSAGE = "\033[0m"      # Default
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# COLORED CONSOLE FORMATTER
-# ──────────────────────────────────────────────────────────────────────────────
-
-class ColoredFormatter(logging.Formatter):
-    """
-    Custom log formatter with ANSI color codes for terminal output.
-    Automatically disables colors on non-TTY outputs (e.g., piped to file).
-    """
-
-    LEVEL_COLORS = {
-        logging.DEBUG: _AnsiColors.DEBUG,
-        logging.INFO: _AnsiColors.INFO,
-        logging.WARNING: _AnsiColors.WARNING,
-        logging.ERROR: _AnsiColors.ERROR,
-        logging.CRITICAL: _AnsiColors.CRITICAL,
-    }
-
-    def __init__(self, fmt: Optional[str] = None, use_color: bool = True):
-        super().__init__(fmt or "%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        self.use_color = use_color and self._is_tty()
-
-    @staticmethod
-    def _is_tty() -> bool:
-        """Checks if stdout supports ANSI colors."""
-        try:
-            return hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
-        except Exception:
-            return False
-
-    def format(self, record: logging.LogRecord) -> str:
-        if not self.use_color:
-            return super().format(record)
-
-        color = self.LEVEL_COLORS.get(record.levelno, _AnsiColors.RESET)
-        record.levelname = f"{color}{record.levelname}{_AnsiColors.RESET}"
-        record.name = f"{_AnsiColors.NAME}{record.name}{_AnsiColors.RESET}"
-
-        formatted = super().format(record)
-
-        if hasattr(record, 'asctime') and record.asctime in formatted:
-            formatted = formatted.replace(record.asctime, f"{_AnsiColors.TIMESTAMP}{record.asctime}{_AnsiColors.RESET}", 1)
-
-        return formatted
+# Shared console for consistent output
+console = Console()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -167,9 +105,22 @@ def configure_logging(
     # Clear existing handlers to prevent duplicates on re-init
     root_logger.handlers.clear()
 
-    # ── Console Handler (always active) ──────────────────────────────────
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(ColoredFormatter())
+    # ── Console Handler (Rich handler for stylish, "glassy" output) ──────
+    console_handler = RichHandler(
+        console=console,
+        show_time=True,
+        omit_repeated_times=False,
+        show_level=True,
+        show_path=False,  # Path is noisy for this use case
+        enable_link_path=False,
+        markup=True,      # Enables Rich markup like [bold] in log messages
+        rich_tracebacks=True, # Beautiful stack traces
+        log_time_format="[%Y-%m-%d %H:%M:%S]"
+    )
+    
+    # Minimal formatting for Rich since it handles alignments natively
+    console_format = logging.Formatter("%(name)s | %(message)s")
+    console_handler.setFormatter(console_format)
     console_handler.setLevel(getattr(logging, level.upper(), logging.INFO))
     root_logger.addHandler(console_handler)
 

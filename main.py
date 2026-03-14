@@ -34,6 +34,14 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.table import Table
+from rich import box
+
+console = Console()
+
 # ==============================================================================
 # PLATFORM SAFETY — ENCODING LOCK
 # ==============================================================================
@@ -286,12 +294,24 @@ class HealthCheckRunner:
         # Check 4: Config Integrity
         all_passed &= self._check_config_integrity()
         
-        # Summary
+        # Summary Table
+        table = Table(title="[bold cyan]Pre-Flight Health Checks[/bold cyan]", border_style="cyan", box=box.MINIMAL)
+        table.add_column("System Check", style="magenta", no_wrap=True)
+        table.add_column("Status", style="bold")
+        table.add_column("Details", style="dim")
+        
+        for check in self.check_results:
+            status_text = "[green]PASS[/green]" if check["passed"] else "[red]FAIL[/red]"
+            table.add_row(check["check"].upper(), status_text, str(check["details"]))
+            
+        console.print()
+        console.print(table)
+        
         total = self.checks_passed + self.checks_failed
-        self.logger.info(
-            f"Health checks complete: {self.checks_passed}/{total} passed, "
-            f"{self.checks_failed} failed."
-        )
+        if all_passed:
+            self.logger.info(f"Health checks complete: {self.checks_passed}/{total} passed.")
+        else:
+            self.logger.error(f"Health checks failed: {self.checks_failed}/{total} failed.")
         
         return all_passed
     
@@ -496,14 +516,26 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             states = await orchestrator.run_full_pipeline()
             
             # Print scan summary
+            table = Table(title="[bold cyan]Forensic Extraction Summary[/bold cyan]", border_style="cyan", box=box.MINIMAL)
+            table.add_column("Tenant", style="magenta", no_wrap=True)
+            table.add_column("Status", style="bold")
+            table.add_column("Duration (ms)", justify="right", style="green")
+            table.add_column("Nodes Discovered", justify="right", style="yellow")
+            table.add_column("Errors", justify="right", style="red")
+            
             for state in states:
                 summary = state.to_dict()
-                logger.info(f"\nScan Summary for {state.tenant_id}:")
-                logger.info(f"  Stage: {summary['current_stage']}")
-                logger.info(f"  Duration: {summary['total_duration_ms']:.0f}ms")
-                logger.info(f"  Nodes: {summary['nodes']}")
-                if summary['errors']:
-                    logger.warning(f"  Errors: {summary['errors']}")
+                status_color = "[green]SUCCESS[/green]" if not summary['errors'] else "[red]WARNING/ERROR[/red]"
+                table.add_row(
+                    state.tenant_id,
+                    status_color,
+                    f"{summary['total_duration_ms']:.0f}",
+                    str(summary['nodes'].get('merged', 0)),
+                    str(len(summary['errors']))
+                )
+            
+            console.print()
+            console.print(table)
     
     except KeyboardInterrupt:
         logger.info("Pipeline interrupted by user.")
@@ -550,12 +582,28 @@ def main() -> None:
     logger = initialize_logging(log_level=log_level)
     
     # Banner
-    logger.info("--- CLOUDSCAPE NEXUS 5.2 TITAN ---")
-    logger.info("Initializing Sovereign-Forensic Engine...")
-    logger.info(f"Platform: {platform.system()} {platform.release()}")
-    logger.info(f"Python: {sys.version.split()[0]}")
-    logger.info(f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
-    logger.info("----------------------------------")
+    banner_ascii = r"""
+   ______ __                 __  _____                           
+  / ____// /____  __  __   / /_ / ___/ _____  ____ _   ____    ___ 
+ / /    / // __ \ / / / / / __ \\__ \ / ___// __ `/  / __ \  / _ \
+/ /___ / // /_/ // /_/ / / /_/ /___/ / /__ / /_/ /  / /_/ / /  __/
+\____//_/ \____/ \__,_/ /_.___//____/  \___/ \__, /  / .___/  \___/ 
+                  N E X U S   5 . 2   T I T A N
+          SOVEREIGN-FORENSIC MULTI-CLOUD INTELLIGENCE MESH
+"""
+    banner_panel = Panel(
+        Text(banner_ascii, style="bold cyan", justify="center"),
+        border_style="magenta",
+        padding=(1, 2),
+        expand=False,
+        box=box.MINIMAL
+    )
+    console.print(banner_panel)
+    
+    logger.info("[bold cyan]Initializing Sovereign-Forensic Engine...[/bold cyan]")
+    logger.info(f"[magenta]Platform:[/magenta] {platform.system()} {platform.release()}")
+    logger.info(f"[magenta]Python:[/magenta] [yellow]{sys.version.split()[0]}[/yellow]")
+    logger.info(f"[magenta]Time:[/magenta] [green]{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}[/green]")
     
     # PHASE 5: Health Checks (if requested or always as pre-flight)
     health = HealthCheckRunner()
