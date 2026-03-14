@@ -1,14 +1,14 @@
-# 🕸️ Project CloudScape 5.2 Titan
+# Project CloudScape 5.2 Titan
 **Sovereign-Forensic Multi-Cloud Intelligence Mesh**
 
 ![Version](https://img.shields.io/badge/Version-5.2.0-00FF41)
 ![Status](https://img.shields.io/badge/Status-Production_Ready-blue)
 ![Architecture](https://img.shields.io/badge/Architecture-Decoupled_Microservices-orange)
 
-## 📖 Executive Summary
+## Executive Summary
 Project CloudScape Titan is a highly distributed, multi-tenant Cloud Detection and Response (CDR) engine. Abandoning traditional linear scanning, it utilizes a **Recursive Graph-Correlation Fabric** backed by Neo4j. By concurrently ingesting multiple isolated cloud environments (AWS/Azure) directly or via emulators (LocalStack/Azurite), CloudScape intelligently discovers hidden, cross-account attack paths—specifically IAM Identity Trusts, VPC Peerings, and RBAC vulnerabilities.
 
-## 🏗️ System Architecture & Topologies
+## System Architecture & Topologies
 CloudScape is designed with strict separation of concerns, heavily prioritizing decoupled execution and modular scale.
 
 * **`frontend/`**: The modern User Interface layer (Managed by the Frontend/UI Team).
@@ -23,7 +23,7 @@ CloudScape is designed with strict separation of concerns, heavily prioritizing 
 
 ---
 
-## ⚙️ Prerequisites & Dependencies
+## Prerequisites & Dependencies
 
 ### 1. Core Systems
 * **Python 3.10+** (Recommend 3.12)
@@ -41,7 +41,7 @@ cd D:\Cloudscape_Project
 .\scripts\launch_nexus.ps1
 ```
 
-## 🚀 Execution & Interaction
+## Execution & Interaction
 
 CloudScape provides comprehensive run commands for any granular task. It operates via the `.ps1` wrapper scripts or via direct Python entry points. **For a full, exhaustive list of every possible execution command, please read the `run.txt` file located in the root directory.**
 
@@ -52,7 +52,7 @@ CloudScape provides comprehensive run commands for any granular task. It operate
 4. Run standard forensic scan: `python backend/main.py --mode HYBRID`
 5. Shutdown the ecosystem safely: `.\scripts\soft_reset.ps1`
 
-## 🛡️ Operational Modes
+## Operational Modes
 The `main.py` pipeline utilizes specific extraction logic based on the mode provided:
 - **`MOCK`**: Pure synthetic environment. Generates randomized local states without connecting to Docker. Fast unit testing.
 - **`LIVE`**: Pure production extraction. Connects directly to real AWS/Azure via identities. Highly sensitive.
