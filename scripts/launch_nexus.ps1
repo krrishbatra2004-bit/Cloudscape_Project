@@ -156,6 +156,11 @@ function Test-PortAvailability {
         $TcpConn = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
         if ($TcpConn) {
             $Process = Get-Process -Id $TcpConn[0].OwningProcess -ErrorAction SilentlyContinue
+            $AllowedProcs = @("wslrelay", "com.docker.backend", "docker-proxy", "vpnkit", "Idle")
+            if ($Process.Name -in $AllowedProcs -or $Process.Id -eq 0) {
+                Write-ConsoleUi "Port $Port is held by Docker mapping ($($Process.Name)). Permitting." "INFO"
+                return $true
+            }
             Write-ConsoleUi "Port $Port is blocked by Process UI: $($Process.Name) (PID: $($Process.Id))" "WARN"
             return $false
         }
@@ -176,11 +181,10 @@ function Invoke-PreFlightChecks {
     
     $AllPassed = $true
     foreach ($Check in $Checks) {
-        try {
-            $Result = Invoke-Expression "$($Check.Cmd) 2>&1"
-            if ($LASTEXITCODE -ne 0 -and (-not $Result)) { throw "Command failed" }
+        $Proc = Start-Process cmd.exe -ArgumentList "/c $($Check.Cmd) >NUL 2>NUL" -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+        if ($Proc -and ($Proc.ExitCode -eq 0)) {
             Write-ConsoleUi "Diagnostic: $($Check.Name) [PASSED]" "SUCCESS"
-        } catch {
+        } else {
             Write-ConsoleUi "Diagnostic: $($Check.Name) [FAILED] - Ensure dependency is installed." "CRIT"
             $AllPassed = $false
         }
@@ -212,7 +216,7 @@ function Invoke-VirtualEnvironmentSetup {
     if (-not (Test-Path $VenvPath)) {
         Write-ConsoleUi "Virtual Environment not found. Constructing isolated container..." "WARN"
         $CreateVenv = Invoke-Spinner -Message "Building Python .venv ecosystem" -ScriptBlock {
-            cd $using:Global:RootDir
+            Set-Location $using:Global:RootDir
             python -m venv .venv
         }
         if (-not $CreateVenv) { exit 1 }
@@ -233,7 +237,7 @@ function Invoke-VirtualEnvironmentSetup {
     }
     $Job = Start-Job -ScriptBlock $InstallDeps -ArgumentList $PipPath, $ReqFile
     Wait-Job -Job $Job | Out-Null
-    $JobResult = Receive-Job -Job $Job -ErrorAction SilentlyContinue
+    Receive-Job -Job $Job -ErrorAction SilentlyContinue | Out-Null
     
     if ($Job.State -ne 'Completed') {
         Write-ConsoleUi "Failed to synchronize matrix dependencies." "CRIT"
@@ -260,7 +264,7 @@ function Test-ContainerHealth {
 
 function Invoke-ContainerMesh {
     Write-ConsoleUi "Igniting Docker Container Mesh..." "INFO"
-    cd $Global:RootDir
+    Set-Location $Global:RootDir
     
     $ComposeCmd = "docker compose up -d"
     if ($ForceRebuild) { $ComposeCmd += " --build" }
@@ -275,7 +279,7 @@ function Invoke-ContainerMesh {
     
     Write-ConsoleUi "Containers elevated. Polling for sovereign health status..." "INFO"
     
-    $Containers = @("cloudscape-neo4j", "cloudscape-localstack", "cloudscape-redis", "cloudscape-mongodb")
+    $Containers = @("cloudscape_neo4j_engine", "cloudscape_localstack_aws", "cloudscape_redis_cache", "cloudscape_azurite_azure")
     $WaitTimeout = 120 # Seconds
     $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     

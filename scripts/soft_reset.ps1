@@ -73,9 +73,9 @@ try {
 
     # 2. Redis Cache Flush (Targeted Volatile Purge)
     Write-OutputBox "Targeting Redis volatile cache matrix..." "INFO"
-    $RedisRunning = docker ps -q -f "name=cloudscape-redis"
+    $RedisRunning = docker ps -q -f "name=cloudscape_redis_cache"
     if ($RedisRunning) {
-        docker exec cloudscape-redis redis-cli FLUSHALL | Out-Null
+        docker exec cloudscape_redis_cache redis-cli FLUSHALL | Out-Null
         Write-OutputBox "Redis Memory Arrays Flushed." "OK"
     } else {
         Write-OutputBox "Redis is offline. Skipping flush." "WARN"
@@ -83,7 +83,7 @@ try {
 
     # 3. Docker Graceful Stop
     Write-OutputBox "Executing Docker Compose graceful halt sequence..." "INFO"
-    cd $Global:RootDir
+    Set-Location $Global:RootDir
     docker compose stop
     Write-OutputBox "Mesh containers hibernating (Volumes preserved)." "OK"
 

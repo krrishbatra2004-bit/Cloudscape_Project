@@ -44,7 +44,7 @@ azure:
 database:
   uri: "bolt://127.0.0.1:7687"      # Strictly mapped as 'uri' for Pydantic
   user: "neo4j"
-  password: "CloudScape2026!"       # Must identically match Docker NEO4J_AUTH
+  password: "Cloudscape2026!"       # Must identically match Docker NEO4J_AUTH
   redis_uri: "redis://127.0.0.1:6379"
   connection_pool_size: 100
   connection_timeout_sec: 15

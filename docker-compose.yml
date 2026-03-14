@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # CLOUDSCAPE NEXUS 5.0 (AETHER) - ENTERPRISE INFRASTRUCTURE MESH
 # ==============================================================================
 # Compose V2 Specification (Obsolete 'version' tag removed)
@@ -139,12 +139,15 @@ services:
       - "10000:10000" # Blob Service
       - "10001:10001" # Queue Service
       - "10002:10002" # Table Service
+    environment:
+      - AZURE_DISABLE_TELEMETRY=1
+      - AZURE_TELEMETRY_DISABLED=1
     volumes:
       - ./volume/azure_data:/data
     networks:
       - cloudscape_mesh
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "10000"]
+      test: ["CMD", "nc", "-z", "127.0.0.1", "10000"]
       interval: 10s
       timeout: 5s
       retries: 3
