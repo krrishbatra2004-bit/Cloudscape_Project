@@ -8,17 +8,22 @@ from typing import List, Dict, Any
 from core.config import TenantConfig
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 TITAN - SYNTHETIC STATE FACTORY
+# CLOUDSCAPE NEXUS 5.0 TITAN - SYNTHETIC STATE FACTORY (ZERO-G EDITION)
 # ==============================================================================
 # The Advanced Persistent Threat (APT) Simulation Engine.
-# Dynamically forges URM-compliant synthetic infrastructure, injecting chaos, 
-# misconfigurations, and perfectly entangled cross-cloud privilege escalation vectors.
+# Dynamically forges URM-compliant synthetic infrastructure.
+#
+# TITAN UPGRADES:
+# - Cryptographic ID Synchronization: Guarantees exact 1:1 Cross-Cloud OIDC 
+#   entanglement to satisfy the IdentityFabric's strict bridge requirements.
+# - Topological Network Anchoring: Injects deterministic Subnet IDs to ensure 
+#   the synthetic graph physically merges with the Live HAPD paths.
 # ==============================================================================
 
 class StateFactory:
     def __init__(self):
         self.logger = logging.getLogger("Cloudscape.Simulation.StateFactory")
-        # Base scale for threat generation. Modified by dynamic jitter per run.
+        # Base scale for threat generation. Modified by dynamic heuristic jitter per run.
         self.base_scale = 20
 
     def generate_synthetic_topology(self, tenant: TenantConfig) -> List[Dict[str, Any]]:
@@ -27,24 +32,34 @@ class StateFactory:
         Executes dynamic threat generation sequences behind strict fault isolation 
         barriers to ensure a robust, fail-safe synthetic matrix.
         """
-        self.logger.debug(f"[{tenant.id}] Igniting Synthetic Threat Matrix (Dynamic Scale: ~{self.base_scale * 5} nodes)...")
+        self.logger.debug(f"[{tenant.id}] Igniting Synthetic Threat Matrix...")
         synthetic_nodes: List[Dict[str, Any]] = []
 
-        # Chaos Jitter: Varies the number of nodes per scan for topological realism
+        # Chaos Jitter: Varies the number of standard nodes per scan for topological realism
         variance = lambda base: max(1, int(base * random.uniform(0.8, 1.2)))
 
+        # ----------------------------------------------------------------------
+        # CRYPTOGRAPHIC ID SYNCHRONIZATION (THE ZERO-BRIDGE FIX)
+        # ----------------------------------------------------------------------
+        # To guarantee the IdentityFabric finds the Cross-Cloud bridges, we must 
+        # ensure the exact same App IDs are seeded into both Azure and AWS.
+        bridge_count = variance(16)
+        synchronized_app_ids = [f"api://titan-bridge-{tenant.id.lower()}-{i}" for i in range(bridge_count)]
+
+        # The Forging Task Matrix
         forging_tasks = [
             ("AWS Exposed Compute", self._forge_exposed_compute, variance(self.base_scale)),
-            ("AWS Shadow Admins", self._forge_shadow_admin_roles, variance(16)),
-            ("Azure Compromised Identities", self._forge_azure_compromised_identities, variance(16)), # The Missing Link
+            ("AWS Shadow Admins", self._forge_shadow_admin_roles, synchronized_app_ids),
+            ("Azure Compromised Identities", self._forge_azure_compromised_identities, synchronized_app_ids),
             ("AWS Vulnerable S3", self._forge_vulnerable_storage_aws, variance(self.base_scale)),
             ("AWS Unencrypted RDS", self._forge_unencrypted_databases, variance(self.base_scale)),
             ("Azure Public Blobs", self._forge_vulnerable_storage_azure, variance(self.base_scale))
         ]
 
-        for task_name, generator_func, count in forging_tasks:
+        for task_name, generator_func, parameter in forging_tasks:
             try:
-                nodes = generator_func(tenant, count)
+                # Pass either the random count OR the synchronized ID array
+                nodes = generator_func(tenant, parameter)
                 if nodes:
                     synthetic_nodes.extend(nodes)
                     self.logger.debug(f"[{tenant.id}] Forged {len(nodes)} {task_name} vectors.")
@@ -57,17 +72,21 @@ class StateFactory:
         return synthetic_nodes
 
     # ==========================================================================
-    # URM STANDARDIZATION & ENFORCEMENT
+    # URM STANDARDIZATION & TOPOLOGICAL ANCHORING
     # ==========================================================================
 
     def _format_synthetic_node(self, tenant: TenantConfig, cloud: str, service: str, resource_type: str, arn: str, name: str, base_risk: float, specific_metadata: Dict) -> Dict[str, Any]:
         """
         Strict Universal Resource Model (URM) compliance wrapper.
-        Applies heuristic risk jitter to simulate real-world variance.
+        Applies heuristic risk jitter and injects deterministic Network Anchors.
         """
         # Inject dynamic heuristic variance (-0.5 to +0.5) keeping limits 1.0 - 10.0
         jittered_risk = max(1.0, min(10.0, base_risk + random.uniform(-0.5, 0.5)))
         
+        # TOPOLOGICAL ANCHOR: This SubnetId ensures the HAPD Engine physically links 
+        # these synthetic nodes to each other via NETWORK_ACCESS edges.
+        anchor_subnet = f"subnet-titan-mesh-{tenant.id.lower()}"
+
         return {
             "tenant_id": tenant.id,
             "cloud_provider": cloud,
@@ -76,8 +95,10 @@ class StateFactory:
             "arn": arn,
             "name": name,
             "tags": {
-                "Environment": random.choice(["Production", "Staging", "Legacy", "Simulation"]),
-                "DataOrigin": "Synthetic"
+                "Environment": "Simulation",
+                "DataOrigin": "Synthetic",
+                "SubnetId": anchor_subnet,
+                "VpcId": f"vpc-titan-{tenant.id.lower()}"
             },
             "metadata": {
                 "arn": arn,
@@ -85,6 +106,7 @@ class StateFactory:
                 "baseline_risk_score": round(jittered_risk, 2),
                 "last_seen": datetime.now(timezone.utc).isoformat(),
                 "is_simulated": True,
+                "SubnetId": anchor_subnet,
                 **specific_metadata
             }
         }
@@ -118,20 +140,21 @@ class StateFactory:
             
         return nodes
 
-    def _forge_shadow_admin_roles(self, tenant: TenantConfig, count: int) -> List[Dict[str, Any]]:
+    def _forge_shadow_admin_roles(self, tenant: TenantConfig, synchronized_app_ids: List[str]) -> List[Dict[str, Any]]:
         """
         Generates IAM roles with explicit cross-cloud OIDC trusts.
-        These are the targets that the Azure VMs will attempt to assume.
+        Utilizes the synchronized App ID array to guarantee IdentityFabric bridge detection.
         """
         nodes = []
         account = getattr(tenant.credentials, "aws_account_id", "123456789012")
         tenant_uuid = getattr(tenant.credentials, "azure_tenant_id", "simulated-azure-tenant-id")
 
-        for i in range(count):
-            role_name = f"Synth-Azure-Federated-Admin-{i}"
+        for idx, app_id in enumerate(synchronized_app_ids):
+            role_name = f"Synth-Azure-Federated-Admin-{idx}"
             arn = f"arn:aws:iam::{account}:role/{role_name}"
             
             # Formulated specifically to trigger the IdentityFabric cross-cloud linkage
+            # Must be a physically perfect JSON-compatible dictionary structure
             trust_doc = {
                 "Version": "2012-10-17",
                 "Statement": [{
@@ -142,8 +165,8 @@ class StateFactory:
                     "Action": "sts:AssumeRoleWithWebIdentity",
                     "Condition": {
                         "StringEquals": {
-                            # Perfectly linking to the Azure App ID we forge below
-                            f"sts.windows.net/{tenant_uuid}/:aud": f"api://aws-bridge-app-{i}"
+                            # Perfect mathematical alignment with the Azure VM
+                            f"sts.windows.net/{tenant_uuid}/:aud": app_id
                         }
                     }
                 }]
@@ -152,7 +175,7 @@ class StateFactory:
             metadata = {
                 "RoleId": f"AROA{uuid.uuid4().hex[:16].upper()}",
                 "AssumeRolePolicyDocument": trust_doc,
-                "MaxSessionDuration": 43200, # 12 hours (High risk)
+                "MaxSessionDuration": 43200, # 12 hours (High risk lateral movement window)
                 "AttachedManagedPolicies": [{"PolicyName": "AdministratorAccess", "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"}]
             }
             
@@ -213,7 +236,7 @@ class StateFactory:
     # THREAT GENERATION LOGIC (AZURE)
     # ==========================================================================
 
-    def _forge_azure_compromised_identities(self, tenant: TenantConfig, count: int) -> List[Dict[str, Any]]:
+    def _forge_azure_compromised_identities(self, tenant: TenantConfig, synchronized_app_ids: List[str]) -> List[Dict[str, Any]]:
         """
         THE CROSS-CLOUD CATALYST.
         Generates Azure Virtual Machines equipped with System Assigned Managed Identities.
@@ -222,12 +245,9 @@ class StateFactory:
         nodes = []
         sub_id = getattr(tenant.credentials, "azure_subscription_id", "00000000-0000-0000-0000-000000000000")
 
-        for i in range(count):
-            vm_name = f"Synth-Azure-Proxy-VM-{i}"
+        for idx, app_id in enumerate(synchronized_app_ids):
+            vm_name = f"Synth-Azure-Proxy-VM-{idx}"
             arn = f"/subscriptions/{sub_id}/resourceGroups/Synth-RG-01/providers/Microsoft.Compute/virtualMachines/{vm_name}"
-            
-            # The Managed Identity that links to AWS
-            app_id = f"api://aws-bridge-app-{i}"
             
             metadata = {
                 "location": "eastus",
@@ -236,7 +256,8 @@ class StateFactory:
                     "type": "SystemAssigned",
                     "principalId": f"az-sp-{uuid.uuid4().hex[:8]}",
                     "tenantId": getattr(tenant.credentials, "azure_tenant_id", "simulated-azure-tenant-id"),
-                    "federatedApplicationId": app_id # Links directly to AWS IAM Condition
+                    # The strict cryptographic link to the AWS IAM Condition
+                    "federatedApplicationId": app_id 
                 },
                 "networkProfile": {"networkInterfaces": [{"id": "public-nic-01"}]}
             }
