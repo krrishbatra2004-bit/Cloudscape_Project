@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
-from core.config import config, TenantConfig
-from discovery.engines.base_engine import BaseDiscoveryEngine, EngineMode
+from core.config import config, TenantConfig  # type: ignore
+from discovery.engines.base_engine import BaseDiscoveryEngine, EngineMode  # type: ignore
 
 # ==============================================================================
 # CLOUDSCAPE NEXUS 5.2 TITAN - AZURE MULTI-SUBSCRIPTION EXTRACTION SENSOR
@@ -33,16 +33,16 @@ from discovery.engines.base_engine import BaseDiscoveryEngine, EngineMode
 # Conditional Azure SDK imports with graceful fallback
 _AZURE_SDK_AVAILABLE = True
 try:
-    from azure.identity import ClientSecretCredential, DefaultAzureCredential
-    from azure.mgmt.resource import ResourceManagementClient
-    from azure.mgmt.compute import ComputeManagementClient
-    from azure.mgmt.network import NetworkManagementClient
-    from azure.mgmt.storage import StorageManagementClient
-    from azure.mgmt.sql import SqlManagementClient
-    from azure.mgmt.web import WebSiteManagementClient
-    from azure.mgmt.keyvault import KeyVaultManagementClient
-    from azure.mgmt.containerservice import ContainerServiceClient
-    from azure.core.exceptions import (
+    from azure.identity import ClientSecretCredential, DefaultAzureCredential  # type: ignore
+    from azure.mgmt.resource import ResourceManagementClient  # type: ignore
+    from azure.mgmt.compute import ComputeManagementClient  # type: ignore
+    from azure.mgmt.network import NetworkManagementClient  # type: ignore
+    from azure.mgmt.storage import StorageManagementClient  # type: ignore
+    from azure.mgmt.sql import SqlManagementClient  # type: ignore
+    from azure.mgmt.web import WebSiteManagementClient  # type: ignore
+    from azure.mgmt.keyvault import KeyVaultManagementClient  # type: ignore
+    from azure.mgmt.containerservice import ContainerServiceClient  # type: ignore
+    from azure.core.exceptions import (  # type: ignore
         ClientAuthenticationError,
         HttpResponseError,
         ResourceNotFoundError,
@@ -63,8 +63,8 @@ class AzureEngine(BaseDiscoveryEngine):
     Discovers, enumerates, and normalizes Azure infrastructure into URM nodes.
     """
 
-    def __init__(self, tenant: TenantConfig):
-        super().__init__(tenant)
+    def __init__(self, tenant: "TenantConfig"):
+        super().__init__(tenant)  # type: ignore
         self.logger = logging.getLogger(f"CloudScape.Engine.Azure.[{tenant.id}]")
         
         # Azure Configuration
@@ -93,10 +93,12 @@ class AzureEngine(BaseDiscoveryEngine):
             thread_name_prefix=f"azure-{tenant.id[:6]}"
         )
         
+        sub_id_str = str(self.azure_sub_id)
+        sub_id_short = sub_id_str[:8] if len(sub_id_str) >= 8 else sub_id_str
         self.logger.debug(
             f"Azure Engine initialized: "
             f"mode={self.mode.value}, "
-            f"subscription={self.azure_sub_id[:8]}..."
+            f"subscription={sub_id_short}..."
         )
 
     # --------------------------------------------------------------------------
@@ -188,11 +190,13 @@ class AzureEngine(BaseDiscoveryEngine):
             
             # Test by listing resource groups (lightweight call)
             rgs = await self.run_in_thread(
-                lambda: list(self._resource_client.resource_groups.list())
+                lambda: list(self._resource_client.resource_groups.list())  # type: ignore
             )
+            sub_id_str = str(self.azure_sub_id)
+            sub_id_short = sub_id_str[:8] if len(sub_id_str) >= 8 else sub_id_str
             self.logger.info(
                 f"Azure connectivity validated. "
-                f"Subscription: {self.azure_sub_id[:8]}..., "
+                f"Subscription: {sub_id_short}..., "
                 f"Resource Groups: {len(rgs)}"
             )
             return True
@@ -215,7 +219,9 @@ class AzureEngine(BaseDiscoveryEngine):
         3. Enrich with Entra ID metadata (LIVE mode only)
         4. Return URM-normalized nodes
         """
-        self.logger.info(f"Starting Azure discovery for subscription {self.azure_sub_id[:8]}...")
+        sub_id_str = str(self.azure_sub_id)
+        sub_id_short = sub_id_str[:8] if len(sub_id_str) >= 8 else sub_id_str
+        self.logger.info(f"Starting Azure discovery for subscription {sub_id_short}...")
         self.metrics.reset()
         start_time = time.perf_counter()
         
@@ -332,7 +338,7 @@ class AzureEngine(BaseDiscoveryEngine):
         for res in results:
             if isinstance(res, Exception):
                 self.logger.warning(f"  [PARALLEL] Azure low-resource extraction failed: {res}")
-            else:
+            elif isinstance(res, list):
                 nodes.extend(res)
         
         # 2. SERIAL: High resource extractions (Avoid Rate Limits / Memory Spikes)
@@ -359,7 +365,7 @@ class AzureEngine(BaseDiscoveryEngine):
         try:
             self.metrics.services_scanned += 1
             rgs = await self.run_in_thread(
-                lambda: list(self._resource_client.resource_groups.list())
+                lambda: list(self._resource_client.resource_groups.list())  # type: ignore
             )
             for rg in rgs:
                 rg_data = self._serialize_azure_object(rg)
@@ -384,7 +390,7 @@ class AzureEngine(BaseDiscoveryEngine):
             
             # Virtual Machines
             vms = await self.run_in_thread(
-                lambda: list(self._compute_client.virtual_machines.list_all())
+                lambda: list(self._compute_client.virtual_machines.list_all())  # type: ignore
             )
             for vm in vms:
                 vm_data = self._serialize_azure_object(vm)
@@ -396,7 +402,7 @@ class AzureEngine(BaseDiscoveryEngine):
             # Virtual Machine Scale Sets
             try:
                 vmss_list = await self.run_in_thread(
-                    lambda: list(self._compute_client.virtual_machine_scale_sets.list_all())
+                    lambda: list(self._compute_client.virtual_machine_scale_sets.list_all())  # type: ignore
                 )
                 for vmss in vmss_list:
                     vmss_data = self._serialize_azure_object(vmss)
@@ -423,7 +429,7 @@ class AzureEngine(BaseDiscoveryEngine):
             
             # Virtual Networks
             vnets = await self.run_in_thread(
-                lambda: list(self._network_client.virtual_networks.list_all())
+                lambda: list(self._network_client.virtual_networks.list_all())  # type: ignore
             )
             for vnet in vnets:
                 vnet_data = self._serialize_azure_object(vnet)
@@ -435,21 +441,22 @@ class AzureEngine(BaseDiscoveryEngine):
             # Network Security Groups
             try:
                 nsgs = await self.run_in_thread(
-                    lambda: list(self._network_client.network_security_groups.list_all())
+                    lambda: list(self._network_client.network_security_groups.list_all())  # type: ignore
                 )
                 for nsg in nsgs:
                     nsg_data = self._serialize_azure_object(nsg)
-                    risk = 3.0
+                    risk_score = 3.0
                     # Check for open inbound rules
                     if hasattr(nsg, 'security_rules'):
-                        for rule in (nsg.security_rules or []):
-                            if (hasattr(rule, 'direction') and rule.direction == 'Inbound' and
+                        rules = getattr(nsg, 'security_rules', []) or []
+                        for rule in rules:
+                            if (hasattr(rule, 'direction') and getattr(rule, 'direction') == 'Inbound' and
                                 hasattr(rule, 'source_address_prefix') and 
-                                rule.source_address_prefix in ('*', '0.0.0.0/0', 'Internet')):
-                                risk = min(10.0, risk + 3.0)
+                                getattr(rule, 'source_address_prefix') in ('*', '0.0.0.0/0', 'Internet')):
+                                risk_score = min(10.0, risk_score + 3.0)  # type: ignore
                     nodes.append(self.format_urm_payload(
                         service="network", resource_type="NetworkSecurityGroup",
-                        arn=nsg.id, raw_data=nsg_data, baseline_risk=risk
+                        arn=nsg.id, raw_data=nsg_data, baseline_risk=risk_score
                     ))
             except Exception:
                 pass  # NSGs might not be accessible
@@ -469,7 +476,7 @@ class AzureEngine(BaseDiscoveryEngine):
                 return nodes
             
             accounts = await self.run_in_thread(
-                lambda: list(self._storage_client.storage_accounts.list())
+                lambda: list(self._storage_client.storage_accounts.list())  # type: ignore
             )
             for account in accounts:
                 sa_data = self._serialize_azure_object(account)
@@ -498,7 +505,7 @@ class AzureEngine(BaseDiscoveryEngine):
                 return nodes
             
             servers = await self.run_in_thread(
-                lambda: list(self._sql_client.servers.list())
+                lambda: list(self._sql_client.servers.list())  # type: ignore
             )
             for server in servers:
                 srv_data = self._serialize_azure_object(server)
@@ -522,7 +529,7 @@ class AzureEngine(BaseDiscoveryEngine):
                 return nodes
             
             vaults = await self.run_in_thread(
-                lambda: list(self._keyvault_client.vaults.list())
+                lambda: list(self._keyvault_client.vaults.list())  # type: ignore
             )
             for vault in vaults:
                 vault_data = self._serialize_azure_object(vault)
@@ -546,7 +553,7 @@ class AzureEngine(BaseDiscoveryEngine):
                 return nodes
             
             clusters = await self.run_in_thread(
-                lambda: list(self._container_client.managed_clusters.list())
+                lambda: list(self._container_client.managed_clusters.list())  # type: ignore
             )
             for cluster in clusters:
                 cluster_data = self._serialize_azure_object(cluster)
@@ -576,7 +583,7 @@ class AzureEngine(BaseDiscoveryEngine):
         nodes = []
         try:
             self.metrics.services_scanned += 1
-            import requests
+            import requests  # type: ignore
             
             # Acquire management token
             token_url = f"https://login.microsoftonline.com/{self.azure_tenant_id}/oauth2/v2.0/token"
