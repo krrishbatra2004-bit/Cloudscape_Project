@@ -93,8 +93,8 @@ class AzureEngine(BaseDiscoveryEngine):
             thread_name_prefix=f"azure-{tenant.id[:6]}"
         )
         
-        sub_id_str = str(self.azure_sub_id)
-        sub_id_short = sub_id_str[:8] if len(sub_id_str) >= 8 else sub_id_str
+        sub_id_short = self.azure_sub_id[:8]
+
         self.logger.debug(
             f"Azure Engine initialized: "
             f"mode={self.mode.value}, "
@@ -192,8 +192,7 @@ class AzureEngine(BaseDiscoveryEngine):
             rgs = await self.run_in_thread(
                 lambda: list(self._resource_client.resource_groups.list())  # type: ignore
             )
-            sub_id_str = str(self.azure_sub_id)
-            sub_id_short = sub_id_str[:8] if len(sub_id_str) >= 8 else sub_id_str
+            sub_id_short = self.azure_sub_id[:8]
             self.logger.info(
                 f"Azure connectivity validated. "
                 f"Subscription: {sub_id_short}..., "
@@ -219,8 +218,8 @@ class AzureEngine(BaseDiscoveryEngine):
         3. Enrich with Entra ID metadata (LIVE mode only)
         4. Return URM-normalized nodes
         """
-        sub_id_str = str(self.azure_sub_id)
-        sub_id_short = sub_id_str[:8] if len(sub_id_str) >= 8 else sub_id_str
+        sub_id_short = self.azure_sub_id[:8]
+
         self.logger.info(f"Starting Azure discovery for subscription {sub_id_short}...")
         self.metrics.reset()
         start_time = time.perf_counter()
