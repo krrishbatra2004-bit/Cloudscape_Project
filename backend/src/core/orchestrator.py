@@ -92,7 +92,7 @@ class PhaseMetrics:
         return {
             "stage": self.stage,
             "status": self.status.value,
-            "duration_ms": round(self.duration_ms, 2),
+            "duration_ms": int(float(self.duration_ms)),
             "nodes_produced": self.nodes_produced,
             "errors": self.errors,
         }
@@ -106,7 +106,7 @@ class OrchestratorState:
     FIX: This is now instantiated fresh for each scan cycle, preventing
     state accumulation across daemon mode iterations.
     """
-    scan_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    scan_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12]) # pyre-ignore[16]
     tenant_id: str = ""
     current_stage: PipelineStage = PipelineStage.READINESS
     start_time: float = 0.0
@@ -139,7 +139,7 @@ class OrchestratorState:
             "scan_id": self.scan_id,
             "tenant_id": self.tenant_id,
             "current_stage": self.current_stage.value,
-            "total_duration_ms": round(self.total_duration_ms, 2),
+            "total_duration_ms": int(float(self.total_duration_ms)),
             "nodes": {
                 "live": self.live_nodes_extracted,
                 "synthetic": self.synthetic_nodes_generated,
@@ -180,7 +180,7 @@ class ForensicLedgerEntry:
             "tenant_id": self.tenant_id,
             "timestamp": self.timestamp,
             "outcome": self.outcome,
-            "duration_ms": round(self.duration_ms, 2),
+            "duration_ms": int(float(self.duration_ms)),
             "node_count": self.node_count,
             "error_count": self.error_count,
             "summary": self.summary,
@@ -274,7 +274,7 @@ class CloudScapeOrchestrator:
                 self._execute_tenant_pipeline(tenant) 
                 for tenant in self.config_manager.tenants
             ]
-            all_states = await asyncio.gather(*tasks, return_exceptions=False)
+            all_states = list(await asyncio.gather(*tasks, return_exceptions=False))
         
         # Pipeline Summary
         total_nodes = sum(s.merged_nodes_produced for s in all_states)
@@ -403,8 +403,8 @@ class CloudScapeOrchestrator:
         
         try:
             # Import engines here to avoid circular imports
-            from discovery.engines.aws_engine import AWSEngine
-            from discovery.engines.azure_engine import AzureEngine
+            from discovery.engines.aws_engine import AWSEngine # pyre-ignore[21]
+            from discovery.engines.azure_engine import AzureEngine # pyre-ignore[21]
             
             # AWS Extraction (with fault isolation)
             aws_nodes = await self._extract_with_isolation(
@@ -515,7 +515,7 @@ class CloudScapeOrchestrator:
         synthetic_nodes: List[Dict[str, Any]] = []
         
         try:
-            from simulation.state_factory import StateFactory
+            from simulation.state_factory import StateFactory # pyre-ignore[21]
             
             state.simulation_status = ComponentStatus.RUNNING
             factory = StateFactory()
@@ -524,7 +524,7 @@ class CloudScapeOrchestrator:
             loop = asyncio.get_running_loop()
             synthetic_nodes = await loop.run_in_executor(
                 self._executor,
-                factory.generate_synthetic_topology,
+                factory.produce_full_topology,
                 tenant
             )
             
@@ -567,7 +567,7 @@ class CloudScapeOrchestrator:
         merged_nodes: List[Dict[str, Any]] = []
         
         try:
-            from discovery.engines.hybrid_bridge import HybridConvergenceBridge
+            from discovery.engines.hybrid_bridge import HybridConvergenceBridge # pyre-ignore[21]
             
             state.hybrid_bridge_status = ComponentStatus.RUNNING
             bridge = HybridConvergenceBridge()
@@ -669,7 +669,7 @@ class CloudScapeOrchestrator:
         batch_size = self.settings.database.ingestion.batch_size
         
         try:
-            from neo4j import AsyncGraphDatabase
+            from neo4j import AsyncGraphDatabase # pyre-ignore[21]
             
             driver = AsyncGraphDatabase.driver(
                 self.settings.database.neo4j_uri,
@@ -679,7 +679,7 @@ class CloudScapeOrchestrator:
             
             async with driver.session() as session:
                 for i in range(0, len(nodes), batch_size):
-                    batch = nodes[i:i + batch_size]
+                    batch = nodes[i:i + batch_size] # pyre-ignore[16]
                     
                     # MERGE on the Resource label (which carries the UNIQUENESS
                     # constraint on 'arn'), then add CloudResource as a
@@ -783,7 +783,7 @@ class CloudScapeOrchestrator:
             scan_id=state.scan_id,
             tenant_id=state.tenant_id,
             timestamp=datetime.now(timezone.utc).isoformat(),
-            outcome=state.current_stage.value,
+            outcome=state.current_stage.value, # pyre-ignore[6]
             duration_ms=state.total_duration_ms,
             node_count=state.merged_nodes_produced,
             error_count=len(state.errors),

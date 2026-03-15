@@ -1,5 +1,6 @@
+# pyright: reportMissingImports=false
 import os
-import yaml
+import yaml # type: ignore
 import json
 import logging
 import sys
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union, Set
 from datetime import datetime, timezone
 
-from pydantic import (
+from pydantic import ( # pyre-ignore[21]
     BaseModel, 
     Field, 
     ValidationError, 
@@ -335,6 +336,13 @@ class SimulationConfig(BaseModel):
     noise_ratio: float = Field(default=5.0, ge=0.1, le=100.0, description="Benign-to-vulnerable node ratio.")
 
 
+class RBACConfig(BaseModel):
+    """Configuration for the Enterprise Role-Based Access Control engine."""
+    enabled: bool = Field(default=True)
+    strict_mode: bool = Field(default=True, description="Enforce RBAC even in mock environments.")
+    default_fallback_role: str = Field(default="MEMBER", description="Default role if contextual resolution fails.")
+
+
 # ------------------------------------------------------------------------------
 # 5. TENANT & IDENTITY MODELS (THE "ZERO-NONE" FIX)
 # ------------------------------------------------------------------------------
@@ -474,6 +482,7 @@ class Settings(BaseModel):
     forensics: ForensicsConfig = Field(default_factory=ForensicsConfig)
     logic_engine: LogicEngineConfig = Field(default_factory=LogicEngineConfig)
     simulation: SimulationConfig = Field(default_factory=SimulationConfig)
+    rbac: RBACConfig = Field(default_factory=RBACConfig)
     service_registry: Dict[str, Any] = Field(default_factory=dict)
     
     model_config = ConfigDict(extra='ignore', populate_by_name=True)
@@ -585,7 +594,8 @@ class ConfigurationManager:
             if registry_path.exists() and "service_registry" not in raw_settings:
                 try:
                     with open(registry_path, 'r', encoding='utf-8') as reg_file:
-                        raw_settings["service_registry"] = json.load(reg_file)
+                        if isinstance(raw_settings, dict):
+                            raw_settings["service_registry"] = json.load(reg_file)
                 except (json.JSONDecodeError, IOError) as e:
                     self.logger.warning(f"Failed to parse service_registry.json: {e}")
 
@@ -692,55 +702,59 @@ class ConfigurationManager:
         - CLOUDSCAPE_LOCALSTACK_URL  -> settings.aws.localstack_endpoint
         - CLOUDSCAPE_AZURITE_URL     -> settings.azure.azurite_endpoint
         """
+        settings = self.settings
+        if not settings:
+            return
+            
         override_count = 0
         
         # Execution Mode
         exec_mode = os.environ.get("CLOUDSCAPE_EXECUTION_MODE")
         if exec_mode:
-            self.settings.execution_mode = exec_mode.upper()
+            settings.execution_mode = exec_mode.upper()
             override_count += 1
             
         # Database Configuration
         neo4j_pwd = os.environ.get("CLOUDSCAPE_NEO4J_PASSWORD")
         if neo4j_pwd:
-            self.settings.database.neo4j_password = neo4j_pwd
+            settings.database.neo4j_password = neo4j_pwd
             override_count += 1
 
         neo4j_uri = os.environ.get("CLOUDSCAPE_NEO4J_URI")
         if neo4j_uri:
-            self.settings.database.neo4j_uri = neo4j_uri
+            settings.database.neo4j_uri = neo4j_uri
             override_count += 1
             
         neo4j_user = os.environ.get("CLOUDSCAPE_NEO4J_USER")
         if neo4j_user:
-            self.settings.database.neo4j_user = neo4j_user
+            settings.database.neo4j_user = neo4j_user
             override_count += 1
             
         redis_uri = os.environ.get("CLOUDSCAPE_REDIS_URI")
         if redis_uri:
-            self.settings.database.redis_uri = redis_uri
+            settings.database.redis_uri = redis_uri
             override_count += 1
 
         # System Configuration
         log_level = os.environ.get("CLOUDSCAPE_LOG_LEVEL")
         if log_level:
-            self.settings.system.log_level = log_level.upper()
+            settings.system.log_level = log_level.upper()
             override_count += 1
             
         max_concurrency = os.environ.get("CLOUDSCAPE_MAX_CONCURRENCY")
         if max_concurrency and max_concurrency.isdigit():
-            self.settings.system.max_concurrency_per_engine = int(max_concurrency)
+            settings.system.max_concurrency_per_engine = int(max_concurrency)
             override_count += 1
 
         # Emulator Endpoints
         ls_url = os.environ.get("CLOUDSCAPE_LOCALSTACK_URL")
         if ls_url:
-            self.settings.aws.localstack_endpoint = ls_url
+            settings.aws.localstack_endpoint = ls_url
             override_count += 1
             
         az_url = os.environ.get("CLOUDSCAPE_AZURITE_URL")
         if az_url:
-            self.settings.azure.azurite_endpoint = az_url
+            settings.azure.azurite_endpoint = az_url
             override_count += 1
 
         if override_count > 0:
@@ -752,13 +766,16 @@ class ConfigurationManager:
         Useful for forensic auditing and CI/CD drift detection.
         """
         try:
+            settings = self.settings
+            if not settings:
+                return
             config_str = json.dumps({
-                "settings": self.settings.model_dump(mode='json'),
+                "settings": settings.model_dump(mode='json'),
                 "tenant_count": len(self.tenants),
                 "tenant_ids": [t.id for t in self.tenants]
             }, sort_keys=True, default=str)
             ConfigurationManager._config_hash = hashlib.sha256(config_str.encode('utf-8')).hexdigest()
-            self.logger.debug(f"Configuration fingerprint: {ConfigurationManager._config_hash[:16]}...")
+            self.logger.debug(f"Configuration fingerprint: {ConfigurationManager._config_hash[:16]}...") # type: ignore
         except Exception as e:
             self.logger.debug(f"Failed to compute config fingerprint: {e}")
             ConfigurationManager._config_hash = "UNKNOWN"
@@ -770,51 +787,51 @@ class ConfigurationManager:
         that ARNs form correctly when running completely synthetic scans.
         """
         return [
-            TenantConfig(
-                id="PROJ-FIN-01", 
-                name="Finance Subsystem", 
-                environment_type="MOCK",
-                credentials=TenantCredentials(
-                    aws_account_id="111122223333", 
-                    azure_subscription_id="11111111-1111-1111-1111-111111111111"
-                )
-            ),
-            TenantConfig(
-                id="PROJ-WEB-02", 
-                name="Public Web Gateway", 
-                environment_type="MOCK",
-                credentials=TenantCredentials(
-                    aws_account_id="444455556666", 
-                    azure_subscription_id="22222222-2222-2222-2222-222222222222"
-                )
-            ),
-            TenantConfig(
-                id="PROJ-SHR-03", 
-                name="Shared Services DB", 
-                environment_type="MOCK",
-                credentials=TenantCredentials(
-                    aws_account_id="777788889999", 
-                    azure_subscription_id="33333333-3333-3333-3333-333333333333"
-                )
-            ),
-            TenantConfig(
-                id="PROJ-AZURE-04", 
-                name="Azure Edge Gateway", 
-                environment_type="MOCK",
-                credentials=TenantCredentials(
-                    aws_account_id="000000000000", 
-                    azure_subscription_id="44444444-4444-4444-4444-444444444444"
-                )
-            ),
-            TenantConfig(
-                id="PROJ-DR-05", 
-                name="Disaster Recovery Core", 
-                environment_type="MOCK",
-                credentials=TenantCredentials(
-                    aws_account_id="999999999999", 
-                    azure_subscription_id="55555555-5555-5555-5555-555555555555"
-                )
-            )
+            TenantConfig(**{ # pyre-ignore[28]
+                "id": "PROJ-FIN-01", 
+                "name": "Finance Subsystem", 
+                "environment_type": "MOCK",
+                "credentials": TenantCredentials(**{ # pyre-ignore[28]
+                    "aws_account_id": "111122223333", 
+                    "azure_subscription_id": "11111111-1111-1111-1111-111111111111"
+                })
+            }),
+            TenantConfig(**{ # pyre-ignore[28]
+                "id": "PROJ-WEB-02", 
+                "name": "Public Web Gateway", 
+                "environment_type": "MOCK",
+                "credentials": TenantCredentials(**{ # pyre-ignore[28]
+                    "aws_account_id": "444455556666", 
+                    "azure_subscription_id": "22222222-2222-2222-2222-222222222222"
+                })
+            }),
+            TenantConfig(**{ # pyre-ignore[28]
+                "id": "PROJ-SHR-03", 
+                "name": "Shared Services DB", 
+                "environment_type": "MOCK",
+                "credentials": TenantCredentials(**{ # pyre-ignore[28]
+                    "aws_account_id": "777788889999", 
+                    "azure_subscription_id": "33333333-3333-3333-3333-333333333333"
+                })
+            }),
+            TenantConfig(**{ # pyre-ignore[28]
+                "id": "PROJ-AZURE-04", 
+                "name": "Azure Edge Gateway", 
+                "environment_type": "MOCK",
+                "credentials": TenantCredentials(**{ # pyre-ignore[28]
+                    "aws_account_id": "000000000000", 
+                    "azure_subscription_id": "44444444-4444-4444-4444-444444444444"
+                })
+            }),
+            TenantConfig(**{ # pyre-ignore[28]
+                "id": "PROJ-DR-05", 
+                "name": "Disaster Recovery Core", 
+                "environment_type": "MOCK",
+                "credentials": TenantCredentials(**{ # pyre-ignore[28]
+                    "aws_account_id": "999999999999", 
+                    "azure_subscription_id": "55555555-5555-5555-5555-555555555555"
+                })
+            })
         ]
 
     # --------------------------------------------------------------------------
@@ -827,15 +844,18 @@ class ConfigurationManager:
     
     def get_config_summary(self) -> Dict[str, Any]:
         """Returns a concise summary of the active configuration for telemetry."""
+        settings = self.settings
+        if not settings:
+            return {}
         return {
-            "execution_mode": self.settings.execution_mode,
+            "execution_mode": settings.execution_mode,
             "tenant_count": len(self.tenants),
             "tenant_ids": [t.id for t in self.tenants],
-            "aws_regions": self.settings.aws.target_regions,
-            "neo4j_uri": self.settings.database.neo4j_uri,
-            "concurrency": self.settings.system.max_concurrency_per_engine,
-            "simulation_enabled": self.settings.simulation.enabled,
-            "config_hash": self.get_config_fingerprint()[:16],
+            "aws_regions": settings.aws.target_regions,
+            "neo4j_uri": settings.database.neo4j_uri,
+            "concurrency": settings.system.max_concurrency_per_engine,
+            "simulation_enabled": settings.simulation.enabled,
+            "config_hash": self.get_config_fingerprint()[:16], # pyre-ignore[16]
             "initialized_at": self._initialization_timestamp,
             "load_errors": len(self._load_errors)
         }
@@ -853,35 +873,40 @@ class ConfigurationManager:
 
     def get_active_regions(self) -> List[str]:
         """Returns the list of active AWS target regions."""
-        return self.settings.aws.target_regions.copy()
+        settings = self.settings
+        return settings.aws.target_regions.copy() if settings else []
 
     def is_mock_mode(self) -> bool:
         """Convenience method: checks if the system is running in MOCK mode."""
-        return self.settings.execution_mode.upper() == "MOCK"
+        settings = self.settings
+        return settings.execution_mode.upper() == "MOCK" if settings else False
 
     def is_live_mode(self) -> bool:
         """Convenience method: checks if the system is running in LIVE mode."""
-        return self.settings.execution_mode.upper() == "LIVE"
+        settings = self.settings
+        return settings.execution_mode.upper() == "LIVE" if settings else False
 
     def get_forensic_base_path(self) -> Path:
         """Returns the absolute base path for forensic evidence storage."""
-        return self.base_dir / self.settings.forensics.log_path
+        settings = self.settings
+        return self.base_dir / settings.forensics.log_path if settings else self.base_dir / "logs"
 
     def validate_runtime_integrity(self) -> Dict[str, Any]:
         """
         Performs a runtime integrity check on the loaded configuration.
         Returns a diagnostic report dictionary.
         """
+        settings = self.settings
         diagnostics = {
-            "config_loaded": self.settings is not None,
+            "config_loaded": settings is not None,
             "tenant_count": len(self.tenants),
             "all_tenants_have_account_ids": all(
                 t.credentials.aws_account_id not in (None, '', 'None')
                 for t in self.tenants
             ),
-            "neo4j_uri_valid": self.settings.database.neo4j_uri.startswith("bolt://") if self.settings else False,
+            "neo4j_uri_valid": settings.database.neo4j_uri.startswith("bolt://") if settings else False,
             "load_errors": self._load_errors,
-            "execution_mode": self.settings.execution_mode if self.settings else "UNKNOWN",
+            "execution_mode": settings.execution_mode if settings else "UNKNOWN",
             "config_hash": self.get_config_fingerprint()
         }
         return diagnostics

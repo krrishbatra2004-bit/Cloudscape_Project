@@ -1,73 +1,112 @@
 # ==============================================================================
-# PROJECT CLOUDSCAPE: ENTERPRISE TENANT REGISTRY (NEXUS v5.0 AETHER)
+# PROJECT CLOUDSCAPE: ENTERPRISE TENANT REGISTRY (NEXUS v5.2 TITAN) 
+# THE SUPREME SOVEREIGN-FORENSIC CONFIGURATION MATRIX
 # ==============================================================================
-# This registry defines the multi-account/multi-cloud boundaries.
-# The orchestrator will spawn independent asynchronous worker pools for each 
-# tenant defined here, merging them via the Hybrid Data Bridge.
+# This registry defines the physical, logical, and cryptographic boundaries of 
+# the multi-account/multi-cloud data mesh. The orchestrator spawns independent 
+# asynchronous worker pools for each tenant block dynamically mapping them across
+# AWS, Azure, and Hybrid environments.
 #
-# STRICT VALIDATION RULES (Enforced by core/config.py Pydantic Models):
-# - provider: Must be strictly 'aws' or 'azure'
-# - environment_type: Must be 'production', 'development', 'sandbox', 'dr', 
-#                     'finance', or 'shared-services'
+# STRICT TYPE-SAFE VALIDATION ENFORCEMENT RULES (core/config.py):
+# - provider: 'aws', 'azure', 'gcp', 'multi'
+# - environment_type: 'production', 'development', 'sandbox', 'dr', 'finance', 
+#                     'shared-services', 'testing', 'staging', 'mock'
+#
+# 5.2 TITAN CAPABILITIES (ACTIVATED):
+# 1. Zero-None Guarantee: All IDs have mathematically stable cryptographic fallbacks.
+# 2. HCS Metadata Flags: Native Risk-Scorer overrides seeded via declarative YAML tags.
+# 3. Compliance Tagging Matrix: CIS v8, PCI-DSS v4.0, HIPAA, and custom frameworks.
+# 4. Mesh-Segmentation Bindings: Explicit network routing anchors per tenant.
 # ==============================================================================
 
 tenants:
+
   # ----------------------------------------------------------------------------
-  # TENANT 1: The High-Security Vault (Target for Attack Paths)
+  # [PROJ-FIN-01] THE HIGH-SECURITY DATA VAULT (TARGET ZERO)
   # ----------------------------------------------------------------------------
+  # Purpose: The crown jewels. Emulates the central data warehouse holding 
+  # encrypted RDS clusters, PII S3 buckets, and KMS Master Keys.
   - id: "PROJ-FIN-01"
     name: "Finance_Data_Vault"
     provider: "aws"
     environment_type: "production"
     credentials:
-      aws_access_key_id: "test-finance-key"
-      aws_secret_access_key: "test-finance-secret"
+      aws_access_key_id: "T-FIN-ACCESS-KEY"
+      aws_secret_access_key: "T-FIN-SECRET-KEY"
+      aws_account_id: "111122223333"
       aws_default_region: "us-east-1"
     tags:
-      data_sensitivity: "high"
-      compliance: "pci-dss, sox"
-      endpoint_url: "http://127.0.0.1:4566" # Routes to LocalStack Core
-      description: "Holds encrypted RDS databases and PII S3 buckets."
+      data_sensitivity: "CRITICAL_PII"
+      compliance_frameworks: 
+        - "pci-dss-v4"
+        - "sox-itgc"
+        - "gdpr-art32"
+      network_segmentation: "tier-1-isolated"
+      endpoint_url: "http://127.0.0.1:4566"
+      description: "Highest security posture. Target for sophisticated serverless data exfiltration."
+      threat_model: "APT29_EMULATION"
+      hcs_baseline_multiplier: 1.5
+      crown_jewel_paths:
+        - "arn:aws:rds:us-east-1:111122223333:cluster:corp-finance"
+        - "arn:aws:s3:::corp-finance-vault-primary"
+      # Zero-Trust parameters (Overridden by config.py)
+      mtls_enforced: true
+      tailscale_exit_node: "nyc-primary-01"
 
   # ----------------------------------------------------------------------------
-  # TENANT 2: The Public Attack Surface (Entry Point for Simulated Breaches)
+  # [PROJ-WEB-02] THE PUBLIC ATTACK SURFACE (DMZ)
   # ----------------------------------------------------------------------------
+  # Purpose: The vulnerable perimeter. Contains Public ALBs, WAFs, and EC2 
+  # web servers. Has a hidden cross-account trust established to Finance.
   - id: "PROJ-WEB-02"
     name: "Customer_Facing_Web"
     provider: "aws"
     environment_type: "development"
     credentials:
-      aws_access_key_id: "test-web-key"
-      aws_secret_access_key: "test-web-secret"
+      aws_access_key_id: "T-WEB-ACCESS-KEY"
+      aws_secret_access_key: "T-WEB-SECRET-KEY"
+      aws_account_id: "444455556666"
       aws_default_region: "us-east-1"
     tags:
-      data_sensitivity: "low"
-      compliance: "none"
+      data_sensitivity: "LOW"
+      compliance_frameworks: 
+        - "cis-benchmark-v8"
+      network_segmentation: "tier-3-dmz"
       endpoint_url: "http://127.0.0.1:4566"
-      description: "Hosts public ELBs and Web EC2s. Has a hidden cross-account trust to Finance."
+      description: "Front-door infrastructure. Target for Initial Access via WAF Bypass."
+      threat_model: "INITIAL_ACCESS"
+      hcs_baseline_multiplier: 1.0
+      vulnerability_density: "HIGH"
+      public_ingress_points:
+        - "0.0.0.0/0"
+        - "::/0"
 
   # ----------------------------------------------------------------------------
-  # TENANT 3: The Network Backbone
+  # [PROJ-SHR-03] THE NETWORK BACKBONE
   # ----------------------------------------------------------------------------
+  # Purpose: Transit Gateway hub, VPC Peering mesh.
   - id: "PROJ-SHR-03"
     name: "Shared_Infrastructure_Hub"
     provider: "aws"
     environment_type: "shared-services"
     credentials:
-      aws_access_key_id: "test-shared-key"
-      aws_secret_access_key: "test-shared-secret"
+      aws_access_key_id: "T-SHR-ACCESS-KEY"
+      aws_secret_access_key: "T-SHR-SECRET-KEY"
+      aws_account_id: "777788889999"
       aws_default_region: "us-east-1"
     tags:
-      data_sensitivity: "medium"
-      compliance: "internal"
+      data_sensitivity: "MEDIUM"
+      compliance_frameworks: 
+        - "internal-network-audit"
+      network_segmentation: "tier-2-transit"
       endpoint_url: "http://127.0.0.1:4566"
-      description: "Central Transit Gateway and VPC Peering hub. Connects Web and Finance."
+      description: "Central router. Simulates lateral network movement conditions."
 
   # ----------------------------------------------------------------------------
-  # TENANT 4: The Cross-Cloud Identity Provider
+  # [PROJ-AZURE-04] THE CROSS-CLOUD IDENTITY PROVIDER
   # ----------------------------------------------------------------------------
-  # [AETHER UPGRADE] environment_type modified from 'identity-management' to 
-  # 'shared-services' to pass strict mathematical Pydantic validation.
+  # Purpose: Mocks Azure Active Directory (Entra ID) and KeyVault. Exposes the 
+  # highly advanced Cross-Cloud OIDC federation vulnerabilities.
   - id: "PROJ-AZURE-04"
     name: "Azure_Identity_Core"
     provider: "azure"
@@ -75,28 +114,91 @@ tenants:
     credentials:
       azure_client_id: "mock-azure-client-id"
       azure_client_secret: "mock-azure-client-secret"
-      azure_tenant_id: "mock-azure-tenant"
-      azure_subscription_id: "00000000-0000-0000-0000-000000000000"
+      azure_tenant_id: "55555555-5555-5555-5555-555555555555"
+      azure_subscription_id: "66666666-6666-6666-6666-666666666666"
     tags:
-      data_sensitivity: "critical"
-      compliance: "iso-27001"
-      endpoint_url: "http://127.0.0.1:10000" # Routes to Azurite Storage Blob
+      data_sensitivity: "CRITICAL_IDENTITY"
+      compliance_frameworks: 
+        - "iso-27001"
+      network_segmentation: "tier-1-identity"
+      endpoint_url: "http://127.0.0.1:10000"
       azure_location: "eastus"
-      description: "Mocks Entra ID and KeyVault. Contains Service Principals that hold AWS access keys."
+      description: "Primary IDP. Susceptible to Container Escape and KeyVault exfiltration."
+      threat_model: "LATERAL_MOVEMENT"
 
   # ----------------------------------------------------------------------------
-  # TENANT 5: The Disaster Recovery Environment
+  # [PROJ-DR-05] THE DISASTER RECOVERY FACILITY
   # ----------------------------------------------------------------------------
   - id: "PROJ-DR-05"
     name: "Disaster_Recovery_Cold"
     provider: "aws"
     environment_type: "dr"
     credentials:
-      aws_access_key_id: "test-dr-key"
-      aws_secret_access_key: "test-dr-secret"
-      aws_default_region: "eu-central-1" # Asynchronous European fallback
+      aws_access_key_id: "T-DR-ACCESS-KEY"
+      aws_secret_access_key: "T-DR-SECRET-KEY"
+      aws_account_id: "888899990000"
+      aws_default_region: "eu-central-1"
     tags:
-      data_sensitivity: "high"
-      compliance: "soc2"
+      data_sensitivity: "HIGH"
+      compliance_frameworks: 
+        - "soc2-type-2"
+        - "bcdr-iso-22301"
       endpoint_url: "http://127.0.0.1:4566"
-      description: "Cold standby. Contains S3 Cross-Region Replication targets."
+      description: "European standby. Target for Ransomware cross-region replication wipes."
+
+  # ----------------------------------------------------------------------------
+  # [PROJ-ML-06] SHADOW AI & DATA POISONING MESH (NEW)
+  # ----------------------------------------------------------------------------
+  # Purpose: Enterprise AI Sandbox. Emulates AWS Bedrock Base Models, SageMaker 
+  # Notebooks, and DynamoDB Feature Stores.
+  - id: "PROJ-ML-06"
+    name: "AI_Intelligence_Sandbox"
+    provider: "aws"
+    environment_type: "sandbox"
+    credentials:
+      aws_access_key_id: "T-ML-ACCESS-KEY"
+      aws_secret_access_key: "T-ML-SECRET-KEY"
+      aws_account_id: "333344445555"
+      aws_default_region: "us-west-2"
+    tags:
+      data_sensitivity: "CRITICAL_IP"
+      compliance_frameworks: 
+        - "nist-ai-rmf"
+        - "internal-ip-protection"
+      endpoint_url: "http://127.0.0.1:4566"
+      description: "Hosts proprietary LLM models and high-value DynamoDB training sets."
+      threat_model: "DATA_POISONING_AND_LLM_EXFIL"
+      machine_learning_workloads: true
+      crown_jewel_paths:
+        - "arn:aws:bedrock:us-west-2:333344445555:custom-model/Titan-Internal"
+
+  # ----------------------------------------------------------------------------
+  # [PROJ-OPS-07] CONTAINER ORCHESTRATION FABRIC (NEW)
+  # ----------------------------------------------------------------------------
+  # Purpose: Kubernetes Control Plane. Amazon EKS clusters, Azure AKS clusters, 
+  # and poisoned ECR container registries.
+  - id: "PROJ-OPS-07"
+    name: "Enterprise_K8s_Mesh"
+    provider: "multi" # Emulates spanning both EKS and AKS controls
+    environment_type: "production"
+    credentials:
+      aws_access_key_id: "T-OPS-ACCESS-KEY"
+      aws_secret_access_key: "T-OPS-SECRET-KEY"
+      aws_account_id: "999911112222"
+      azure_tenant_id: "77777777-7777-7777-7777-777777777777"
+      azure_subscription_id: "88888888-8888-8888-8888-888888888888"
+      azure_client_id: "mock-ops-client-id"
+      azure_client_secret: "mock-ops-client-secret"
+    tags:
+      data_sensitivity: "MEDIUM"
+      compliance_frameworks: 
+        - "cis-kubernetes-v1.6"
+      network_segmentation: "tier-2-compute"
+      description: "Advanced container orchestration infrastructure. Prime target for Supply Chain attacks."
+      threat_model: "SUPPLY_CHAIN_REGISTRY_POISONING"
+      container_runtime: "containerd"
+      orchestrator_version: "1.28"
+
+# ==============================================================================
+# END OF MATRIX CONFIGURATION
+# ==============================================================================
