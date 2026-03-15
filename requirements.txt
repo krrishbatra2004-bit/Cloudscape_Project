@@ -3,164 +3,272 @@
 # ==============================================================================
 # This file defines the strict cryptographic, network, and cloud-provider 
 # SDK versions required to operate the multi-cloud graph extraction mesh.
-# Contains exactly 109 exact environment dependencies smoothly classified.
+# 
+# Environment synchronization snapshot: 109 locked packages.
+# Categorized for extreme human readability and architectural context.
+# ==============================================================================
+
+# ==============================================================================
+# SECTION A: CRYPTOGRAPHY, SECURITY & TRUST
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# 1. CORE SECURITY & CRYPTOGRAPHY
+# 1. CORE CRYPTOGRAPHIC ENGINES
 # ------------------------------------------------------------------------------
-# Strictly defining cryptography versions to prevent rust binding conflicts
+# Strictly bound to prevent 'x509' Rust binding conflicts during environment scans.
+# Handles low-level encryption for Vault and secret material extraction.
 cryptography==46.0.5
 pyOpenSSL==25.3.0
-certifi==2026.2.25
 
 # ------------------------------------------------------------------------------
-# 2. GRAPH DATABASE & INTELLIGENCE MATRICES
+# 2. CERTIFICATE AUTHORITY & TRUST
 # ------------------------------------------------------------------------------
-# neo4j: Powers the async Bolt protocol for the Materialization Ingestor
-# networkx + pyvis: Powers the Heuristic Attack Path Discovery (HAPD) engine
+# Curated Mozilla CA bundle for verifying secure HTTPS cloud connections.
+certifi==2026.2.25
+
+# ==============================================================================
+# SECTION B: GRAPH INTELLIGENCE & DISCOVERY MATRICES
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 3. GRAPH DATABASE DRIVER (Neo4j)
+# ------------------------------------------------------------------------------
+# Powers the high-throughput async Bolt protocol for the Materialization Ingestor.
 neo4j==6.1.0
+
+# ------------------------------------------------------------------------------
+# 4. HEURISTIC ATTACK PATH DISCOVERY (HAPD)
+# ------------------------------------------------------------------------------
+# NetworkX handles the in-memory graph algorithms and pathfinding.
+# PyVis translates paths into interactive visual DOM trees.
 networkx==3.6.1
 pyvis==0.3.2
 
+# ==============================================================================
+# SECTION C: DISTRIBUTED STATE & ASYNC CONCURRENCY
+# ==============================================================================
+
 # ------------------------------------------------------------------------------
-# 3. STATE MANAGEMENT & CONCURRENCY
+# 5. DIFFERENTIAL STATE MEMORY
 # ------------------------------------------------------------------------------
-# Async networking and caching libraries
+# Redis drives the differential hashing pipeline to detect drift between scans.
 redis==7.3.0
+
+# ------------------------------------------------------------------------------
+# 6. ASYNCHRONOUS WEB TRANSPORT
+# ------------------------------------------------------------------------------
+# The backbone for massive concurrent cloud API requests (especially Azure).
+# Handles connection pooling, timeouts, and low-level loop interactions.
 aiohttp==3.13.3
 aiosignal==1.4.0
 anyio==4.12.1
 aiohappyeyeballs==2.6.1
 
+# ==============================================================================
+# SECTION D: CLOUD EXTRACTION FABRICS
+# ==============================================================================
+
 # ------------------------------------------------------------------------------
-# 4. AWS EXTRACTION FABRIC
+# 7. AWS EXTRACTION FABRIC (boto3)
 # ------------------------------------------------------------------------------
-# boto3/botocore: Bound together to ensure paginator and URM stability
+# Bound together to ensure paginator, Universal Resource Mapping (URM) stability,
+# and high-speed multi-threaded S3 object chunking.
 boto3==1.42.68
 botocore==1.42.68
 s3transfer==0.16.0
 jmespath==1.1.0
 
 # ------------------------------------------------------------------------------
-# 5. AZURE MANAGEMENT & DISCOVERY SDKS
+# 8. AZURE CORE IDENTITY & AUTHENTICATION
 # ------------------------------------------------------------------------------
-# Highly specific ARM (Azure Resource Manager) libraries required for Path B
-azure-common==1.1.28
+# Foundational libraries for Entra ID (Azure AD), Managed Identities, and MSAL.
 azure-core==1.38.3
 azure-identity==1.25.3
-azure-storage-blob==12.28.0
-azure-mgmt-resource==25.0.0
-azure-mgmt-compute==37.2.0
-azure-mgmt-network==30.2.0
-azure-mgmt-containerservice==40.2.0
-azure-mgmt-cosmosdb==9.9.0
-azure-mgmt-keyvault==13.0.0
-azure-mgmt-sql==3.0.1
-azure-mgmt-authorization==4.0.0
-azure-mgmt-storage==21.1.0
+azure-common==1.1.28
 azure-mgmt-core==1.6.0
 msal==1.35.1
 msal-extensions==1.3.1
 msrest==0.7.1
+azure-mgmt-authorization==4.0.0
 
 # ------------------------------------------------------------------------------
-# 6. CONFIGURATION, SERIALIZATION & DATA PARSING
+# 9. AZURE INFRASTRUCTURE MANAGEMENT (ARM) SDKS
 # ------------------------------------------------------------------------------
-PyYAML==6.0.3
-python-dateutil==2.9.0.post0
+# Highly specific Azure Resource Manager modules for scraping infrastructure state.
+azure-mgmt-resource==25.0.0
+azure-mgmt-compute==37.2.0
+azure-mgmt-network==30.2.0
+azure-mgmt-containerservice==40.2.0
+
+# ------------------------------------------------------------------------------
+# 10. AZURE DATA & KEY VAULT SDKS
+# ------------------------------------------------------------------------------
+# Extracts configurations from databases, blob storage, and secrets engines.
+azure-mgmt-cosmosdb==9.9.0
+azure-mgmt-keyvault==13.0.0
+azure-mgmt-sql==3.0.1
+azure-mgmt-storage==21.1.0
+azure-storage-blob==12.28.0
+
+# ==============================================================================
+# SECTION E: CONFIGURATION, PARSING & SERIALIZATION
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 11. DATA VALIDATION & TYPE COERCION (Pydantic)
+# ------------------------------------------------------------------------------
+# Ensures incoming cloud API data conforms to strict Nexus schematics.
 pydantic==2.12.5
 pydantic-settings==2.13.1
 pydantic_core==2.41.5
 python-dotenv==1.2.2
-jsonpickle==4.1.1
-jsonschema==4.26.0
-jsonschema-specifications==2025.9.1
-toml==0.10.2
-pycparser==3.0
-isodate==0.7.2
 
 # ------------------------------------------------------------------------------
-# 7. WEB & HTTP CLIENTS
+# 12. FILE PARSERS & TOKENS
 # ------------------------------------------------------------------------------
+# Parses YAML/TOML config definitions and raw AST trees for configuration rules.
+PyYAML==6.0.3
+toml==0.10.2
+pycparser==3.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+jsonpickle==4.1.1
+
+# ------------------------------------------------------------------------------
+# 13. DATE & TIME MANIPULATION
+# ------------------------------------------------------------------------------
+# Normalizes ISO-8601 timestamps and drift calculation windows.
+python-dateutil==2.9.0.post0
+isodate==0.7.2
+pytz==2026.1.post1
+tzdata==2025.3
+
+# ==============================================================================
+# SECTION F: NETWORKING & PROTOCOLS
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 14. HIGH-LEVEL HTTP CLIENTS
+# ------------------------------------------------------------------------------
+# Synchronous fallbacks and OAuth handshakes for third-party integrations.
 requests==2.32.5
 httpx==0.27.0
+requests-oauthlib==2.0.0
+oauthlib==3.3.1
+
+# ------------------------------------------------------------------------------
+# 15. LOW-LEVEL NETWORK DRIVERS
+# ------------------------------------------------------------------------------
+# Foundational URL parsing, character set normalization, and socket connections.
 httpcore==1.0.9
 h11==0.16.0
 urllib3==2.6.3
 idna==3.11
 charset-normalizer==3.4.5
-requests-oauthlib==2.0.0
-oauthlib==3.3.1
 yarl==1.23.0
 multidict==6.7.1
 sniffio==1.3.1
 tornado==6.5.4
 
+# ==============================================================================
+# SECTION G: DATA SCIENCE, UI & VISUALIZATION
+# ==============================================================================
+
 # ------------------------------------------------------------------------------
-# 8. DATA SCIENCE & VISUALIZATION
+# 16. DATA PIPELINES & MATRICES (Pandas/NumPy)
 # ------------------------------------------------------------------------------
+# Used for heavy statistical aggregation of cloud misconfiguration densities.
 pandas==2.3.3
 numpy==1.26.4
+pyarrow==23.0.1
+narwhals==2.17.0
+
+# ------------------------------------------------------------------------------
+# 17. INTERACTIVE VISUALIZATION (Plotly/Altair)
+# ------------------------------------------------------------------------------
+# Renders 3D risk topologies and telemetry dashboards.
 plotly==6.6.0
 altair==6.0.0
-narwhals==2.17.0
-pyarrow==23.0.1
 matplotlib-inline==0.2.1
 
 # ------------------------------------------------------------------------------
-# 9. TERMINAL, LOGGING & DASHBOARD (UI)
+# 18. TERMINAL INTERFACE & LOGGING (Rich UI)
 # ------------------------------------------------------------------------------
+# Drives the gorgeous command-line interface, spinners, and colored logs.
 rich==14.3.3
 colorama==0.4.6
-streamlit==1.55.0
-blinker==1.9.0
-click==8.3.1
-prompt_toolkit==3.0.52
 Pygments==2.19.2
-pydeck==0.9.1
+prompt_toolkit==3.0.52
+click==8.3.1
 
 # ------------------------------------------------------------------------------
-# 10. TYPING, INTERACTIVE TOOLS & STATIC ANALYSIS
+# 19. WEB DASHBOARDING ENGINE (Streamlit)
 # ------------------------------------------------------------------------------
-annotated-types==0.7.0
+# The core engine for the local browser-based Cloudscape analyst hub.
+streamlit==1.55.0
+pydeck==0.9.1
+blinker==1.9.0
+
+# ==============================================================================
+# SECTION H: DEVELOPMENT, TYPING & INTERNALS
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 20. TYPE HINTING & STATIC ANALYSIS
+# ------------------------------------------------------------------------------
+# Advanced runtime and static typing enforcements.
 typing_extensions==4.15.0
+annotated-types==0.7.0
 traitlets==5.14.3
 typing-inspection==0.4.2
-parso==0.8.6
-jedi==0.19.2
+
+# ------------------------------------------------------------------------------
+# 21. INTERACTIVE DEBUGGING & TRACING
+# ------------------------------------------------------------------------------
+# Tools for interactive REPL contexts and runtime error introspection.
+ipython==9.11.0
+ipython_pygments_lexers==1.1.1
 asttokens==3.0.1
 executing==2.2.1
 pure_eval==0.2.3
+parso==0.8.6
+jedi==0.19.2
 stack-data==0.6.3
-ipython==9.11.0
-ipython_pygments_lexers==1.1.1
 
 # ------------------------------------------------------------------------------
-# 11. UTILITIES, OTHERS & DEPENDENCIES
+# 22. MARKDOWN REndering & TEMPLATING
 # ------------------------------------------------------------------------------
+# Generates automated PDF/HTML risk reports combining Jinja templates and MD.
+Jinja2==3.1.6
+markdown-it-py==4.0.0
+MarkupSafe==3.0.3
+mdurl==0.1.2
+
+# ------------------------------------------------------------------------------
+# 23. GIT & REPOSITORY INTEGRATIONS
+# ------------------------------------------------------------------------------
+# Analyzes repository history and infrastructure-as-code (IaC) drift.
+GitPython==3.1.46
+gitdb==4.0.12
+smmap==5.0.2
+
+# ------------------------------------------------------------------------------
+# 24. CORE PYTHON UTILITIES (Various)
+# ------------------------------------------------------------------------------
+# Essential utilities for caching, object manipulation, decorators, and retries.
 attrs==25.4.0
 cachetools==5.5.2
 cffi==2.0.0
 decorator==5.2.1
 frozenlist==1.8.0
-gitdb==4.0.12
-GitPython==3.1.46
-Jinja2==3.1.6
-markdown-it-py==4.0.0
-MarkupSafe==3.0.3
-mdurl==0.1.2
 packaging==23.2
 pillow==10.4.0
 propcache==0.4.1
 protobuf==4.25.8
-pytz==2026.1.post1
 referencing==0.37.0
 rpds-py==0.30.0
 six==1.17.0
-smmap==5.0.2
 tenacity==8.5.0
-tzdata==2025.3
 watchdog==4.0.0
 wcwidth==0.6.0
 PyJWT==2.11.0
