@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 
-from core.config import config, ConfigurationManager, TenantConfig
+from core.config import config, ConfigurationManager, TenantConfig # pyre-ignore[21]
 
 # ==============================================================================
 # CLOUDSCAPE NEXUS 5.2 TITAN - SUPREME GLOBAL ORCHESTRATOR (FINAL AUTHORITY)
