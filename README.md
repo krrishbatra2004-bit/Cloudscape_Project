@@ -9,7 +9,7 @@
 Project CloudScape Titan is a highly distributed, multi-tenant Cloud Detection and Response (CDR) engine. Abandoning traditional linear scanning, it utilizes a **Recursive Graph-Correlation Fabric** backed by Neo4j. By concurrently ingesting multiple isolated cloud environments (AWS/Azure) directly or via emulators (LocalStack/Azurite), CloudScape intelligently discovers hidden, cross-account attack paths—specifically IAM Identity Trusts, VPC Peerings, and RBAC vulnerabilities.
 
 ## System Architecture & Topologies
-CloudScape is designed with strict separation of concerns, heavily prioritizing decoupled execution and modular scale.
+CloudScape is designed with strict separation of concerns, heavily prioritizing decoupled execution, modular scale, and rigorous type safety (enforced via strict Pyre/Pyright compliance).
 
 * **`frontend/`**: The modern User Interface layer (Managed by the Frontend/UI Team).
 * **`backend/`**: The Sovereign-Forensic Core Engine. Contains:
@@ -26,7 +26,7 @@ CloudScape is designed with strict separation of concerns, heavily prioritizing 
 ## Prerequisites & Dependencies
 
 ### 1. Core Systems
-* **Python 3.10+** (Recommend 3.12)
+* **Python 3.12+** (Strict typing enabled via Pyright/Pyre)
 * **Docker Engine** (Compose V2+)
 * **PowerShell 5.1+**
 

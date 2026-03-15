@@ -26,6 +26,7 @@ manifests/
 neo4j_data/
 moto_data/
 disk/
+volume/
 tests/data/
 *.log
 *.json
