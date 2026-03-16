@@ -4,8 +4,9 @@ CLOUDSCAPE NEXUS 5.2 TITAN - COMMAND REFERENCE TERMINAL
 
 This document serves as the comprehensive execution manual for the
 Sovereign-Forensic Mesh. Ensure you are in the project root and your
-virtual environment is activated before running Python commands:
 > .\.venv\Scripts\activate.ps1
+
+NOTE: When copying commands, do NOT include the leading "> " character.
 
 ================================================================================
 1. MASTER ORCHESTRATION SCRIPTS (PowerShell)
@@ -77,8 +78,8 @@ A. INSTALL DEPENDENCIES (first time only)
 
 B. START DEVELOPMENT SERVER
    > cd web_ui
-   > npm run dev -- --port 5173
-   Opens at: http://localhost:5173
+   > npm run dev -- --port 5176
+   Opens at: http://localhost:5176
 
    Pages:
    - /               → Mission Control Dashboard
@@ -95,21 +96,21 @@ C. PRODUCTION BUILD
 ================================================================================
 4. STANDALONE UTILITIES & SCRIPTS
 ================================================================================
-Specialized forensic debugging and testing tools (in `backend\scripts\`).
+Specialized forensic debugging and testing tools (in `backend\src\`).
 
 A. GRAPH MAINTENANCE (Neo4j)
-   > python backend/scripts/db_tools.py --init     # Initialize schema
-   > python backend/scripts/db_tools.py --stats    # Node/edge count metrics
-   > python backend/scripts/db_tools.py --gc       # Garbage collect
-   > python backend/scripts/db_tools.py --verify   # Audit graph integrity
-   > python backend/scripts/db_tools.py --full     # Run all maintenance
+   > python backend/src/utils/db_tools.py --init     # Initialize schema
+   > python backend/src/utils/db_tools.py --stats    # Node/edge count metrics
+   > python backend/src/utils/db_tools.py --gc       # Garbage collect
+   > python backend/src/utils/db_tools.py --verify   # Audit graph integrity
+   > python backend/src/utils/db_tools.py --full     # Run all maintenance
 
 B. MESH SEEDING (LocalStack Vulnerabilities)
-   > python backend/scripts/mesh_seeder.py         # Seed cross-account mesh
-   > python backend/scripts/mesh_seeder.py --clean # Remove phantom items
+   > python backend/src/simulation/mesh_seeder.py         # Seed cross-account mesh
+   > python backend/src/simulation/mesh_seeder.py --clean # Remove phantom items
 
 C. VISIBILITY DEBUGGER
-   > python backend/scripts/visibility_debugger.py # Emulator telemetry probe
+   > python backend/src/utils/visibility_debugger.py # Emulator telemetry probe
 
 ================================================================================
 5. QUICK START (Full Stack)
@@ -122,9 +123,9 @@ Run both the backend API and React frontend together:
 
    Terminal 2 (Frontend):
    > cd web_ui
-   > npm run dev -- --port 5173
+   > npm run dev -- --port 5176
 
-   Then open http://localhost:5173 in your browser.
+   Then open http://localhost:5176 in your browser.
 
 ================================================================================
 6. DOCKER SERVICES
