@@ -1,31 +1,67 @@
-/* Cloudscape dark mode additions */
+/* ==========================================================
+   CLOUDSCAPE GLASSMORPHISM DESIGN SYSTEM
+   ========================================================== */
+
+:root {
+  --glass-bg: rgba(11, 20, 26, 0.4);
+  --glass-bg-hover: rgba(11, 20, 26, 0.6);
+  --glass-border: rgba(0, 161, 255, 0.25);
+  --glass-border-bright: rgba(0, 161, 255, 0.45);
+  --glass-blur: blur(12px);
+  --accent-cyan: #00d2ff;
+  --accent-blue: #3a7bd5;
+  --text-primary: #eaeded;
+}
+
 body {
   margin: 0;
   padding: 0;
-  background-color: #0b141a; /* Even deeper dark for more contrast */
-  color: #eaeded;
+  background-color: #050a0f;
+  background-image: 
+    radial-gradient(circle at 20% 30%, rgba(0, 161, 255, 0.05) 0%, transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(58, 123, 213, 0.05) 0%, transparent 40%);
+  color: var(--text-primary);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
 }
 
+/* Glass Utility */
+.glass-effect {
+  background: var(--glass-bg) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8) !important;
+}
+
+/* Header Glassmorphism */
 #h {
-  box-shadow: 0 4px 20px 0 rgba(0,0,0,0.8);
-  border-bottom: 1px solid rgba(0, 161, 255, 0.2);
-  background: linear-gradient(90deg, #0b141a 0%, #11202f 100%);
+  background: rgba(11, 20, 26, 0.6) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border-bottom: 1px solid var(--glass-border) !important;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5) !important;
+  z-index: 1002;
+}
+
+#h [data-testid="top-navigation"] {
+  background: transparent !important;
 }
 
 /* 3D Canvas container */
 .canvas-container {
   width: 100%;
   height: calc(100vh - 140px);
-  background: radial-gradient(circle at center, #11202f 0%, #050a0f 100%);
-  border-radius: 12px;
+  background: radial-gradient(circle at center, #0b141a 0%, #050a0f 100%);
+  border-radius: 16px;
   overflow: hidden;
-  box-shadow: inset 0 0 80px rgba(0,0,0,0.9), 0 0 20px rgba(0, 161, 255, 0.1);
-  border: 1px solid rgba(0, 161, 255, 0.15);
+  box-shadow: inset 0 0 100px rgba(0,0,0,0.9), 0 0 30px rgba(0, 161, 255, 0.05);
+  border: 1px solid rgba(0, 161, 255, 0.1);
   position: relative;
+  margin: 10px 0;
 }
 
-/* Add a scanner overlay effect to the 3D map */
+/* Scanner overlay */
 .canvas-container::after {
   content: '';
   position: absolute;
@@ -33,9 +69,12 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  background: linear-gradient(to bottom, rgba(0, 161, 255, 0) 0%, rgba(0, 161, 255, 0.05) 50%, rgba(0, 161, 255, 0) 100%);
+  background: linear-gradient(to bottom, 
+    rgba(0, 210, 255, 0) 0%, 
+    rgba(0, 210, 255, 0.03) 50%, 
+    rgba(0, 210, 255, 0) 100%);
   background-size: 100% 200%;
-  animation: scan 8s linear infinite;
+  animation: scan 10s linear infinite;
   pointer-events: none;
 }
 
@@ -44,84 +83,119 @@ body {
   100% { background-position: 0 200%; }
 }
 
+/* Expanded Glass Node Panel */
 .node-panel {
   position: absolute;
-  top: 20px;
-  right: 20px;
-  width: 350px;
-  max-height: calc(100vh - 180px);
+  top: 24px;
+  right: 24px;
+  width: 380px;
+  max-height: calc(100vh - 200px);
   overflow-y: auto;
-  background-color: rgba(11, 20, 26, 0.85);
-  border: 1px solid rgba(0, 161, 255, 0.3);
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.7), 0 0 15px rgba(0, 161, 255, 0.1);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(11, 20, 26, 0.5) !important;
+  border: 1px solid var(--glass-border-bright) !important;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 15px 45px rgba(0,0,0,0.8), 0 0 20px rgba(0, 161, 255, 0.15) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
   color: #fff;
   z-index: 100;
-  transition: all 0.3s ease;
-  animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: slideIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes slideIn {
-  from { transform: translateX(50px); opacity: 0; }
+  from { transform: translateX(60px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
 
-/* Custom glowing text and status colors */
-.text-status-error { text-shadow: 0 0 10px rgba(239, 68, 68, 0.5); }
-.text-status-warning { text-shadow: 0 0 10px rgba(245, 158, 11, 0.5); }
-.text-status-success { text-shadow: 0 0 10px rgba(34, 197, 94, 0.5); }
+/* Custom glowing text */
+.text-status-error { text-shadow: 0 0 12px rgba(239, 68, 68, 0.6); color: #ef4444; }
+.text-status-warning { text-shadow: 0 0 12px rgba(245, 158, 11, 0.6); color: #f59e0b; }
+.text-status-success { text-shadow: 0 0 12px rgba(34, 197, 94, 0.6); color: #22c55e; }
 
-/* Custom scrollbar for webkit */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: rgba(0,0,0,0.2); 
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(0, 161, 255, 0.3); 
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 161, 255, 0.6); 
+/* Side Navigation Glassmorphism */
+.awsui_navigation_16mbe_6m0x1_149 { /* Targeted Cloudscape class for nav */
+  background: transparent !important;
 }
 
-/* Header UI Enhancements */
+.awsui_link_16mbe_6m0x1_235:hover {
+  background: var(--glass-bg-hover) !important;
+  backdrop-filter: blur(4px);
+  border-radius: 8px;
+}
+
+/* Vibrant Animated Title */
 .cloudscape-vibrant-title {
   font-weight: 900 !important;
-  font-size: 1.4rem !important;
-  letter-spacing: 0.08em;
-  background: linear-gradient(90deg, #00d2ff 0%, #3a7bd5 50%, #00d2ff 100%);
+  font-size: 1.5rem !important;
+  letter-spacing: 0.1em;
+  background: linear-gradient(90deg, 
+    var(--accent-cyan) 0%, 
+    var(--accent-blue) 50%, 
+    var(--accent-cyan) 100%);
   background-size: 200% auto;
   color: transparent !important;
   -webkit-background-clip: text !important;
   background-clip: text !important;
-  animation: shine 4s linear infinite;
+  animation: title-shine 5s linear infinite;
   text-transform: uppercase;
-  text-shadow: 0 0 20px rgba(0, 210, 255, 0.6);
+  filter: drop-shadow(0 0 10px rgba(0, 210, 255, 0.4));
   display: inline-block;
-  padding: 5px 0;
+  padding: 4px 0;
+  white-space: nowrap;
   min-width: max-content;
-}
-
-@keyframes shine {
-  to { background-position: 200% center; }
 }
 
 /* Override Cloudscape default link truncation */
 span.cloudscape-vibrant-title {
   overflow: visible !important;
   text-overflow: clip !important;
+  white-space: nowrap !important;
 }
 
 /* Force AWS UI parent wrappers to NOT truncate our large custom font */
 a:has(.cloudscape-vibrant-title),
-a:has(.cloudscape-vibrant-title) * {
+a:has(.cloudscape-vibrant-title) *,
+.awsui_logo_16mbe_6m0x1_235,
+.awsui_identity_16mbe_6m0x1_235 {
   overflow: visible !important;
   max-width: none !important;
+  min-width: max-content !important;
+}
+
+@keyframes title-shine {
+  to { background-position: 200% center; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.1); 
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 161, 255, 0.2); 
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 161, 255, 0.5); 
+}
+
+/* Cloudscape Overrides for Transparency */
+.awsui_app-layout_16mbe_6m0x1_149 {
+  background-color: transparent !important;
+}
+
+main.awsui_content_16mbe_6m0x1_383 {
+  background-color: transparent !important;
+}
+
+/* Fix for side nav wrapper */
+nav[aria-label="Side navigation"] {
+  background: rgba(11, 20, 26, 0.2) !important;
+  backdrop-filter: blur(8px);
+  border-right: 1px solid var(--glass-border) !important;
 }

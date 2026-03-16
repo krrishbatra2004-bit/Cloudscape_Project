@@ -26,7 +26,7 @@ class CloudscapeApiServer:
         self._driver = None
         
     def setup_routes(self):
-        # Enable permissive CORS for frontend Vite dev server (localhost:5173)
+        # Enable permissive CORS for frontend Vite dev server (localhost:5176)
         self.app.add_routes([
             web.options('/api/{tail:.*}', self.handle_cors_preflight),
             web.get('/api/graph', self.get_graph),

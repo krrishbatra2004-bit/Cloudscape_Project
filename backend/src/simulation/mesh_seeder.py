@@ -478,7 +478,7 @@ class EnterpriseGraphMeshSeeder:
                 
                 try:
                     with self.driver.session() as session:
-                        result = session.write_transaction(
+                        result = session.execute_write(
                             lambda tx: tx.run(query, {"edges": batch_data}).consume()
                         )
                         self.metrics.edges_created += result.counters.relationships_created
@@ -541,7 +541,7 @@ class EnterpriseGraphMeshSeeder:
         
         try:
             with self.driver.session() as session:
-                result = session.write_transaction(
+                result = session.execute_write(
                     lambda tx: tx.run(phantom_query, {"phantoms": phantom_data}).consume()
                 )
                 self.metrics.phantom_nodes_created = result.counters.nodes_created

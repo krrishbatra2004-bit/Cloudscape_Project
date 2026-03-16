@@ -604,7 +604,6 @@ class CloudScapeOrchestrator:
     # --------------------------------------------------------------------------
     # STAGE 5: INTELLIGENCE
     # --------------------------------------------------------------------------
-    
     async def _stage_intelligence(
         self, 
         state: OrchestratorState, 
@@ -612,10 +611,11 @@ class CloudScapeOrchestrator:
     ) -> None:
         """
         Executes the Intelligence generation pipeline:
-        - Graph Ingestion (Neo4j MERGE)
+        - Graph Ingestion (Neo4j MERGE with metadata)
         - HAPD Attack Path Discovery
         - Identity Fabric Correlation
         - Risk Score Computation
+        - Relationship Synthesis (Added Titan 5.2 Fix)
         """
         phase = PhaseMetrics(stage=PipelineStage.INTELLIGENCE.value)
         phase.mark_start()
@@ -628,7 +628,7 @@ class CloudScapeOrchestrator:
             state.phase_metrics[PipelineStage.INTELLIGENCE.value] = phase
             return
         
-        self.logger.debug(f"  [Stage 5] Ingesting {len(merged_nodes)} nodes into Neo4j...")
+        self.logger.debug(f"  [Stage 5] Ingesting {len(merged_nodes)} nodes with metadata into Neo4j...")
         
         try:
             state.intelligence_status = ComponentStatus.RUNNING
@@ -636,11 +636,15 @@ class CloudScapeOrchestrator:
             # Sub-stage 5A: Neo4j Graph Ingestion
             await self._ingest_to_graph(merged_nodes)
             
-            # Sub-stage 5B: HAPD Attack Path Discovery
+            # Sub-stage 5B: Relationship Synthesis (TITAN 5.2 REPAIR)
+            # We must synthesize edges now that nodes exist with metadata
+            await self._synthesize_topology_edges(merged_nodes, state)
+            
+            # Sub-stage 5C: HAPD Attack Path Discovery
             paths_count = await self._run_hapd_engine(merged_nodes)
             state.intelligence_paths_discovered = paths_count
             
-            # Sub-stage 5C: Identity Fabric Correlation
+            # Sub-stage 5D: Identity Fabric Correlation
             bridges_count = await self._run_identity_fabric(merged_nodes)
             state.identity_bridges_found = bridges_count
             
@@ -661,14 +665,44 @@ class CloudScapeOrchestrator:
         
         state.phase_metrics[PipelineStage.INTELLIGENCE.value] = phase
 
+    async def _synthesize_topology_edges(self, nodes: List[Dict[str, Any]], state: OrchestratorState) -> None:
+        """
+        TITAN 5.2 REPAIR: Invokes the EnterpriseGraphMeshSeeder to analyze URM 
+        metadata and synthesize meaningful topology edges (VPC, IAM, USES_ROLE).
+        """
+        try:
+            from simulation.mesh_seeder import EnterpriseGraphMeshSeeder # pyre-ignore[21]
+            
+            self.logger.info("  [Intelligence] Synthesizing topology relationships...")
+            seeder = EnterpriseGraphMeshSeeder()
+            
+            # Seed the mesh (this handles Neo4j connection internally)
+            metrics = seeder.ingest_mesh(nodes, tenant_id=state.tenant_id)
+            
+            if metrics.errors:
+                for err in metrics.errors:
+                    state.warnings.append(f"MeshSeeder: {err}")
+            
+            self.logger.info(
+                f"  [Intelligence] Synthesis complete. "
+                f"Edges: {metrics.edges_created}, "
+                f"Phantoms: {metrics.phantom_nodes_created}"
+            )
+            
+            seeder.close()
+        except Exception as e:
+            self.logger.error(f"  [Intelligence] Topology synthesis failed: {e}")
+            state.warnings.append(f"TopologySynthesis: {e}")
+
     async def _ingest_to_graph(self, nodes: List[Dict[str, Any]]) -> None:
         """
         Batch ingests URM nodes into Neo4j using parameterized MERGE operations.
-        Uses batching to prevent OOM for large node counts.
+        Includes full metadata and properties for relationship synthesis.
         """
         batch_size = self.settings.database.ingestion.batch_size
         
         try:
+            import json
             from neo4j import AsyncGraphDatabase # pyre-ignore[21]
             
             driver = AsyncGraphDatabase.driver(
@@ -681,6 +715,16 @@ class CloudScapeOrchestrator:
                 for i in range(0, len(nodes), batch_size):
                     batch = nodes[i:i + batch_size] # pyre-ignore[16]
                     
+                    # TITAN 5.2 FIX: Ingesting metadata and properties as JSON blobs
+                    # This is required for the MeshSeeder to analyze links.
+                    processed_batch = []
+                    for node in batch:
+                        n = node.copy()
+                        # Convert dicts to JSON strings for Neo4j storage visibility
+                        n['metadata_json'] = json.dumps(node.get('metadata', {}))
+                        n['properties_json'] = json.dumps(node.get('properties', {}))
+                        processed_batch.append(n)
+
                     # MERGE on the Resource label (which carries the UNIQUENESS
                     # constraint on 'arn'), then add CloudResource as a
                     # secondary label.  This prevents constraint violations
@@ -696,6 +740,8 @@ class CloudScapeOrchestrator:
                         n.cloud_provider = node.cloud_provider,
                         n.tenant_id = node.tenant_id,
                         n.risk_score = node.risk_score,
+                        n.metadata_json = node.metadata_json,
+                        n.properties_json = node.properties_json,
                         n._tenant_id = node.tenant_id,
                         n._resource_type = node.type,
                         n._baseline_risk_score = node.risk_score,
@@ -704,7 +750,7 @@ class CloudScapeOrchestrator:
                     """
                     
                     try:
-                        await session.run(merge_query, {"batch": batch})
+                        await session.run(merge_query, {"batch": processed_batch})
                         self.logger.debug(
                             f"    Ingested batch {i // batch_size + 1} "
                             f"({len(batch)} nodes)"

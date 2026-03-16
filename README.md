@@ -59,9 +59,9 @@ The API server starts on **http://localhost:4000**.
 ```powershell
 cd web_ui
 npm install          # first time only
-npm run dev -- --port 5173
+npm run dev -- --port 5176
 ```
-Open **http://localhost:5173** in your browser.
+Open **http://localhost:5176** in your browser.
 
 ### 3. Docker Services (optional, for HYBRID/LIVE modes)
 ```powershell
