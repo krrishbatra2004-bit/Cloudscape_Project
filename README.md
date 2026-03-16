@@ -1,4 +1,4 @@
-# Project CloudScape 5.2 Titan
+# CloudScape Nexus 5.2 Titan
 **Sovereign-Forensic Multi-Cloud Intelligence Mesh**
 
 ![Version](https://img.shields.io/badge/Version-5.2.0-00FF41)
@@ -6,58 +6,91 @@
 ![Architecture](https://img.shields.io/badge/Architecture-Decoupled_Microservices-orange)
 
 ## Executive Summary
-Project CloudScape Titan is a highly distributed, multi-tenant Cloud Detection and Response (CDR) engine. Abandoning traditional linear scanning, it utilizes a **Recursive Graph-Correlation Fabric** backed by Neo4j. By concurrently ingesting multiple isolated cloud environments (AWS/Azure) directly or via emulators (LocalStack/Azurite), CloudScape intelligently discovers hidden, cross-account attack paths—specifically IAM Identity Trusts, VPC Peerings, and RBAC vulnerabilities.
+CloudSCAPE Titan is a multi-tenant Cloud Detection and Response (CDR) engine. It utilizes a **Recursive Graph-Correlation Fabric** backed by Neo4j to concurrently ingest multiple isolated cloud environments (AWS/Azure) directly or via emulators (LocalStack/Azurite), discovering hidden cross-account attack paths — specifically IAM Identity Trusts, VPC Peerings, and RBAC vulnerabilities.
 
-## System Architecture & Topologies
-CloudScape is designed with strict separation of concerns, heavily prioritizing decoupled execution, modular scale, and rigorous type safety (enforced via strict Pyre/Pyright compliance).
+## Project Structure
 
-* **`frontend/`**: The modern User Interface layer (Managed by the Frontend/UI Team).
-* **`backend/`**: The Sovereign-Forensic Core Engine. Contains:
-  * **`src/core`**: Orchestration logic, unified configuration, and cross-project trust correlation.
-  * **`src/discovery`**: AWS and Azure asynchronous extraction engine implementations.
-  * **`src/intelligence`**: Graph mapping and algorithmic risk scoring capabilities.
-  * **`src/simulation`**: Synthetic APT state generation and enterprise LocalStack seeder.
-* **`scripts/`**: Advanced PowerShell orchestration tools for lifecycle, network diagnostics, and teardowns.
-* **The Forensic Vault**: Namespaced JSON data outputs logged in `backend/forensics/` serving as chronological, immutable traces.
-* **The Container Mesh**: A synchronized Docker deployment comprising `Neo4j`, `LocalStack`, `Redis`, and `MongoDB`.
-
----
-
-## Prerequisites & Dependencies
-
-### 1. Core Systems
-* **Python 3.12+** (Strict typing enabled via Pyright/Pyre)
-* **Docker Engine** (Compose V2+)
-* **PowerShell 5.1+**
-
-### 2. Environment Setup
-Clone the repository and automatically spin up the ecosystem:
-
-```powershell
-# Navigate to the Project Root
-cd D:\Cloudscape_Project
-
-# Run the Master Launch Orchestrator (Creates .venv, installs dependencies, boots Docker, runs checks)
-.\scripts\launch_nexus.ps1
+```
+Cloudscape_Project/
+├── backend/                        # Python Backend Engine
+│   ├── main.py                     # Entry point (--api for REST server)
+│   ├── config/                     # settings.yaml, tenants.yaml
+│   ├── src/
+│   │   ├── api/server.py           # aiohttp REST API (port 4000)
+│   │   ├── core/                   # Orchestrator, RBAC, correlation
+│   │   ├── discovery/              # AWS/Azure async extraction
+│   │   ├── intelligence/           # Risk scoring, policy engine
+│   │   ├── simulation/             # Mock data (state_factory, seeders)
+│   │   └── utils/                  # DB tools, logger, config loader
+│   ├── data/                       # Manifests & temp data
+│   ├── forensics/                  # BSON ledger, logs, reports, snapshots
+│   └── scripts/soft_reset.py
+│
+├── web_ui/                         # React Frontend (Vite)
+│   ├── index.html
+│   ├── package.json
+│   ├── vite.config.js
+│   └── src/
+│       ├── App.jsx / main.jsx      # App shell & routing
+│       ├── index.css / App.css     # Global styles
+│       ├── components/             # Graph3D, NodePanel, TopNav, SideNav
+│       ├── pages/                  # Dashboard, InfrastructureMap, BlastRadius, etc.
+│       ├── services/               # api.js (Axios), websocket.js
+│       └── stores/                 # useStore.js (Zustand state)
+│
+├── scripts/                        # PowerShell launch & reset scripts
+├── volume/                         # Docker volume mounts (Neo4j, Redis, etc.)
+├── docker-compose.yml              # Container mesh definition
+├── requirements.txt                # Python dependencies (min versions)
+├── requirements_env.txt            # Frozen pip environment snapshot
+└── run.txt                         # Full command reference manual
 ```
 
-## Execution & Interaction
+## Quick Start
 
-CloudScape provides comprehensive run commands for any granular task. It operates via the `.ps1` wrapper scripts or via direct Python entry points. **For a full, exhaustive list of every possible execution command, please read the `run.txt` file located in the root directory.**
+### 1. Backend
+```powershell
+.\.venv\Scripts\activate.ps1
+python backend/main.py --mode MOCK --api
+```
+The API server starts on **http://localhost:4000**.
 
-### Quick-Start Guide
-1. Activate virtual environment: `.\.venv\Scripts\activate.ps1`
-2. Start the Graph & Emulators: `.\scripts\launch_nexus.ps1`
-3. Optional Graph Seeding: `python backend/scripts/mesh_seeder.py`
-4. Run standard forensic scan: `python backend/main.py --mode HYBRID`
-5. Shutdown the ecosystem safely: `.\scripts\soft_reset.ps1`
+### 2. Frontend
+```powershell
+cd web_ui
+npm install          # first time only
+npm run dev -- --port 5173
+```
+Open **http://localhost:5173** in your browser.
+
+### 3. Docker Services (optional, for HYBRID/LIVE modes)
+```powershell
+docker compose up -d
+```
+
+## API Endpoints
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/graph` | GET | Full graph topology (nodes + edges) |
+| `/api/assets` | GET | Asset inventory listing |
+| `/api/blast-radius/:id` | GET | Blast radius from a specific node |
 
 ## Operational Modes
-The `main.py` pipeline utilizes specific extraction logic based on the mode provided:
-- **`MOCK`**: Pure synthetic environment. Generates randomized local states without connecting to Docker. Fast unit testing.
-- **`LIVE`**: Pure production extraction. Connects directly to real AWS/Azure via identities. Highly sensitive.
-- **`HYBRID`**: Emulated local deployment. Connects to LocalStack/Azurite dockers. Perfect for testing exploits safely.
+| Mode | Description |
+|------|-------------|
+| **MOCK** | Synthetic environment. No Docker required. Fast testing. |
+| **LIVE** | Production extraction. Connects to real AWS/Azure. |
+| **HYBRID** | Emulated deployment. Connects to LocalStack/Azurite. |
+
+## Frontend Pages
+| Page | Path | Description |
+|------|------|-------------|
+| Mission Dashboard | `/` | Security overview with metrics & charts |
+| Multi-Cloud Topology | `/map` | Interactive 3D infrastructure graph |
+| Blast Radius Engine | `/blast-radius` | APT kill chain impact analysis |
+| Forensic Timeline | `/timeline` | State snapshot time-travel |
+| Security Events | `/events` | Live alerts & drift detections |
 
 ---
 
-*Project Titan: "Visibility is absolute. Trust is an edge."*
+*CloudSCAPE Titan: "Visibility is absolute. Trust is an edge."*

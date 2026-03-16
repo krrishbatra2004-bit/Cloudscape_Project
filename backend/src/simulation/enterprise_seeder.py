@@ -1,11 +1,11 @@
 import json
 import logging
 import time
-import boto3
-from botocore.exceptions import ClientError
+import boto3  # type: ignore
+from botocore.exceptions import ClientError  # type: ignore
 from typing import Dict, List
 
-from core.config import config, TenantConfig
+from core.config import config, TenantConfig  # type: ignore
 
 # Configure standard logging for the seeder
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - [SEEDER] - %(message)s")
@@ -128,7 +128,7 @@ class EnterpriseMeshSeeder:
                 "Statement": [{
                     "Effect": "Allow",
                     "Principal": {
-                        "AWS": f"arn:aws:iam::{prod_tenant.account_id}:root"
+                        "AWS": f"arn:aws:iam::{prod_tenant.account_id}:root"  # type: ignore[union-attr]
                     },
                     "Action": "sts:AssumeRole"
                 }]

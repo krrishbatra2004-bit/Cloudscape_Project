@@ -2,78 +2,148 @@
 CLOUDSCAPE NEXUS 5.2 TITAN - COMMAND REFERENCE TERMINAL
 ================================================================================
 
-This document serves as the comprehensive execution manual for the Sovereign-Forensic Mesh.
-Ensure you are in the project root (`D:\Cloudscape_Project`) and your virtual environment is activated before running Python commands directly:
+This document serves as the comprehensive execution manual for the
+Sovereign-Forensic Mesh. Ensure you are in the project root and your
+virtual environment is activated before running Python commands:
 > .\.venv\Scripts\activate.ps1
 
---------------------------------------------------------------------------------
+================================================================================
 1. MASTER ORCHESTRATION SCRIPTS (PowerShell)
---------------------------------------------------------------------------------
+================================================================================
 These scripts manage the entire environment lifecycle (located in `scripts\`).
 
 A. LAUNCH NEXUS
-   Boots the system, validates dependencies, initializes Docker mesh, and starts the backend.
+   Boots the system, validates dependencies, initializes Docker mesh,
+   and starts the backend.
    > .\scripts\launch_nexus.ps1
    > .\scripts\launch_nexus.ps1 -RunMode MOCK
    > .\scripts\launch_nexus.ps1 -RunMode LIVE -ForceRebuild
    > .\scripts\launch_nexus.ps1 -RunMode DAEMON -VerboseUI
 
 B. SOFT RESET
-   Gracefully stops Docker containers, flushes Redis cache, kills orphan Python processes, and rotates logs.
+   Gracefully stops Docker containers, flushes Redis cache, kills
+   orphan Python processes, and rotates logs.
    > .\scripts\soft_reset.ps1
    > .\scripts\soft_reset.ps1 -ForceTerminate
 
 C. HARD RESET (SCORCHED EARTH)
-   Irreversibly destroys all containers, volumes, databases, venv, pycache, and forensic logs.
+   Irreversibly destroys all containers, volumes, databases, venv,
+   pycache, and forensic logs.
    > .\scripts\hard_reset.ps1
    > .\scripts\hard_reset.ps1 -BypassConfirmation
 
---------------------------------------------------------------------------------
-2. BACKEND ENGINE ABSTRACTION (Python)
---------------------------------------------------------------------------------
-These commands directly interface with the Python Orchestrator (located in `backend\`).
+================================================================================
+2. BACKEND ENGINE (Python)
+================================================================================
+These commands directly interface with the Python Orchestrator
+(located in `backend\`).
 
 A. HEALTH & SCHEMA
-   > python backend/main.py --health          # Run pre-flight matrix validation natively
+   > python backend/main.py --health          # Run pre-flight health checks
    > python backend/main.py --schema          # Apply Neo4j constraints & indexes
 
 B. PIPELINE EXECUTION MODES
-   > python backend/main.py                   # Run single scan cycle (uses settings.yaml mode)
-   > python backend/main.py --mode MOCK       # Specific cycle overriding mode to MOCK
-   > python backend/main.py --mode LIVE       # Specific cycle overriding mode to LIVE
-   > python backend/main.py --mode HYBRID     # Specific cycle overriding mode to HYBRID
+   > python backend/main.py                   # Single scan (uses settings.yaml)
+   > python backend/main.py --mode MOCK       # Override to MOCK mode
+   > python backend/main.py --mode LIVE       # Override to LIVE mode
+   > python backend/main.py --mode HYBRID     # Override to HYBRID mode
 
-C. DAEMON & CONTINUOUS SCANNING
-   > python backend/main.py --daemon          # Run infinite loop scanning (default 300s)
+C. REST API SERVER (serves React frontend)
+   > python backend/main.py --mode MOCK --api     # Start API on port 4000
+   > python backend/main.py --mode HYBRID --api   # HYBRID mode + API server
+   The API runs on http://localhost:4000 and exposes:
+     GET  /api/graph              → Full graph (nodes + edges)
+     GET  /api/assets             → Asset inventory
+     GET  /api/blast-radius/:id   → Blast radius from a specific node
+
+D. DAEMON & CONTINUOUS SCANNING
+   > python backend/main.py --daemon          # Infinite loop (default 300s)
    > python backend/main.py --daemon --interval 600
 
-D. REPORTING & DEBUGGING
-   > python backend/main.py --report          # Export forensic graph data to generic JSON
-   > python backend/main.py --verbose         # Enable deep DEBUG-level matrix tracing
-   > python backend/main.py --no-simulation   # Disables APT synthetic injection
+E. REPORTING & DEBUGGING
+   > python backend/main.py --report          # Export forensic graph to JSON
+   > python backend/main.py --verbose         # Enable DEBUG-level tracing
+   > python backend/main.py --no-simulation   # Disable APT synthetic injection
 
---------------------------------------------------------------------------------
-3. STANDALONE UTILITIES & SCRIPTS
---------------------------------------------------------------------------------
-Specialized forensic debugging and testing tools (located in `backend\scripts\`).
+================================================================================
+3. REACT FRONTEND (Vite)
+================================================================================
+The React UI is located in `web_ui\`. It connects to the backend API
+at http://localhost:4000.
+
+A. INSTALL DEPENDENCIES (first time only)
+   > cd web_ui
+   > npm install
+
+B. START DEVELOPMENT SERVER
+   > cd web_ui
+   > npm run dev -- --port 5173
+   Opens at: http://localhost:5173
+
+   Pages:
+   - /               → Mission Control Dashboard
+   - /map            → Multi-Cloud Infrastructure Topology (3D graph)
+   - /blast-radius   → Blast Radius Engine (APT kill chain analysis)
+   - /timeline       → Forensic Timeline (state snapshots)
+   - /events         → Security Events & Alerts
+
+C. PRODUCTION BUILD
+   > cd web_ui
+   > npm run build               # Output in web_ui/dist/
+   > npm run preview             # Preview production build
+
+================================================================================
+4. STANDALONE UTILITIES & SCRIPTS
+================================================================================
+Specialized forensic debugging and testing tools (in `backend\scripts\`).
 
 A. GRAPH MAINTENANCE (Neo4j)
-   > python backend/scripts/db_tools.py --init     # Initialize basic schema
-   > python backend/scripts/db_tools.py --stats    # Get node/edge count metrics
-   > python backend/scripts/db_tools.py --gc       # Garbage collect dangling nodes
+   > python backend/scripts/db_tools.py --init     # Initialize schema
+   > python backend/scripts/db_tools.py --stats    # Node/edge count metrics
+   > python backend/scripts/db_tools.py --gc       # Garbage collect
    > python backend/scripts/db_tools.py --verify   # Audit graph integrity
-   > python backend/scripts/db_tools.py --full     # Run all maintenance tasks
+   > python backend/scripts/db_tools.py --full     # Run all maintenance
 
 B. MESH SEEDING (LocalStack Vulnerabilities)
-   > python backend/scripts/mesh_seeder.py         # Seed basic vulnerable cross-account mesh
-   > python backend/scripts/mesh_seeder.py --clean # Remove previously seeded phantom items
+   > python backend/scripts/mesh_seeder.py         # Seed cross-account mesh
+   > python backend/scripts/mesh_seeder.py --clean # Remove phantom items
 
 C. VISIBILITY DEBUGGER
-   > python backend/scripts/visibility_debugger.py # Direct-to-emulator telemetry probe
+   > python backend/scripts/visibility_debugger.py # Emulator telemetry probe
 
---------------------------------------------------------------------------------
-4. TESTING FRAMEWORK
---------------------------------------------------------------------------------
-> pytest backend/tests/                            # Run full backend unit testing suite
-> pytest backend/tests/ -v                         # Verbose unit testing
+================================================================================
+5. QUICK START (Full Stack)
+================================================================================
+Run both the backend API and React frontend together:
+
+   Terminal 1 (Backend):
+   > .\.venv\Scripts\activate.ps1
+   > python backend/main.py --mode MOCK --api
+
+   Terminal 2 (Frontend):
+   > cd web_ui
+   > npm run dev -- --port 5173
+
+   Then open http://localhost:5173 in your browser.
+
+================================================================================
+6. DOCKER SERVICES
+================================================================================
+Managed via docker-compose.yml in the project root.
+
+   > docker compose up -d        # Start all containers
+   > docker compose down         # Stop all containers
+   > docker compose logs -f      # Tail logs
+
+   Services:
+   - Neo4j      → bolt://localhost:7687   (Graph DB)
+   - Redis      → localhost:6379          (Cache)
+   - LocalStack → localhost:4566          (AWS emulator)
+   - Azurite    → localhost:10000         (Azure emulator)
+
+================================================================================
+7. TESTING
+================================================================================
+   > pytest backend/tests/                  # Full backend test suite
+   > pytest backend/tests/ -v               # Verbose mode
 ================================================================================

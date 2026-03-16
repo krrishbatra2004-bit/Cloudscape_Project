@@ -17,8 +17,9 @@
 # ------------------------------------------------------------------------------
 # Strictly bound to prevent 'x509' Rust binding conflicts during environment scans.
 # Handles low-level encryption for Vault and secret material extraction.
-cryptography==46.0.5
-pyOpenSSL==25.3.0
+cryptography>=46.0.0
+pyOpenSSL>=25.3.0
+certifi>=2024.2.2
 
 # ------------------------------------------------------------------------------
 # 2. CERTIFICATE AUTHORITY & TRUST
@@ -34,7 +35,10 @@ certifi==2026.2.25
 # 3. GRAPH DATABASE DRIVER (Neo4j)
 # ------------------------------------------------------------------------------
 # Powers the high-throughput async Bolt protocol for the Materialization Ingestor.
-neo4j==6.1.0
+neo4j>=6.1.0
+redis>=7.2.0
+aiohttp>=3.9.3
+aiosignal>=1.3.1
 
 # ------------------------------------------------------------------------------
 # 4. HEURISTIC ATTACK PATH DISCOVERY (HAPD)
@@ -53,6 +57,16 @@ pyvis==0.3.2
 # ------------------------------------------------------------------------------
 # Redis drives the differential hashing pipeline to detect drift between scans.
 redis==7.3.0
+azure-core>=1.38.0
+azure-identity>=1.25.0
+azure-storage-blob>=12.19.0
+azure-mgmt-resource>=25.0.0
+azure-mgmt-compute>=37.0.0
+azure-mgmt-network>=30.0.0
+azure-mgmt-containerservice>=40.0.0
+azure-mgmt-cosmosdb>=9.0.0
+azure-mgmt-keyvault>=10.0.0
+azure-mgmt-sql>=3.0.0
 
 # ------------------------------------------------------------------------------
 # 6. ASYNCHRONOUS WEB TRANSPORT
@@ -71,6 +85,7 @@ aiohappyeyeballs==2.6.1
 # ------------------------------------------------------------------------------
 # 7. AWS EXTRACTION FABRIC (boto3)
 # ------------------------------------------------------------------------------
+<<<<<<< HEAD
 # Bound together to ensure paginator, Universal Resource Mapping (URM) stability,
 # and high-speed multi-threaded S3 object chunking.
 boto3==1.42.68
@@ -272,3 +287,20 @@ tenacity==8.5.0
 watchdog==4.0.0
 wcwidth==0.6.0
 PyJWT==2.11.0
+=======
+pyright>=1.1.350
+
+# ------------------------------------------------------------------------------
+# 8. TERMINAL, LOGGING, & VISUALIZATION
+# ------------------------------------------------------------------------------
+rich>=13.9.0
+colorama>=0.4.6
+
+# ------------------------------------------------------------------------------
+# 9. FRONTEND (React/Vite) — managed via web_ui/package.json
+# ------------------------------------------------------------------------------
+# The React frontend dependencies (react, react-three/fiber, 
+# @cloudscape-design/components, zustand, axios, etc.) are managed
+# separately in web_ui/package.json via npm.
+# To install frontend dependencies:
+#   cd web_ui && npm install

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     CloudScape Nexus 5.2 - Supreme Launch Orchestrator
 
@@ -96,16 +96,46 @@ function Write-ConsoleUi {
 
 function Show-Header {
     Clear-Host
-    Write-Host @"
-                     ______ __                 __  _____                  
-      / ____// /____  __  __   / /_ / ___/ _____  ____ _   ____    ___    
-     / /    / // __ \ / / / / / __ \\__ \ / ___// __ `/  / __ \  / _ \    
-    / /___ / // /_/ // /_/ / / /_/ /___/ / /__ / /_/ /  / /_/ / /  __/    
-   \____//_/ \____/ \__,_/ /_.___//____/  \___/ \__, /  / .___/  \___/    
-                               N E X U S   5 . 2   T I T A N              
-                  SOVEREIGN-FORENSIC MULTI-CLOUD INTELLIGENCE MESH        
-"@ -ForegroundColor Cyan
-    Write-Host "`n"
+
+    $Border      = "DarkCyan"
+    $TitleColor   = "Cyan"
+    $AccentColor  = "Yellow"
+    $TagColor     = "Magenta"
+
+    Write-Host ""
+    Write-Host "  ╔════════════════════════════════════════════════════════════════════════════════════════╗" -ForegroundColor $Border
+    Write-Host "  ║                                                                                        ║" -ForegroundColor $Border
+    Write-Host "  ║" -ForegroundColor $Border -NoNewline
+    Write-Host "   ██████╗ ██╗      ██████╗ ██╗   ██╗ ██████╗  ███████╗  ██████╗  █████╗  ██████╗  ███████╗  " -ForegroundColor $TitleColor -NoNewline
+    Write-Host "║" -ForegroundColor $Border
+    Write-Host "  ║" -ForegroundColor $Border -NoNewline
+    Write-Host "  ██╔════╝ ██║     ██╔═══██╗██║   ██║ ██╔══██╗ ██╔════╝ ██╔════╝ ██╔══██╗ ██╔══██╗ ██╔════╝  " -ForegroundColor $TitleColor -NoNewline
+    Write-Host "║" -ForegroundColor $Border
+    Write-Host "  ║" -ForegroundColor $Border -NoNewline
+    Write-Host "  ██║      ██║     ██║   ██║██║   ██║ ██║  ██║ ███████╗ ██║      ███████║ ██████╔╝ █████╗    " -ForegroundColor $TitleColor -NoNewline
+    Write-Host "║" -ForegroundColor $Border
+    Write-Host "  ║" -ForegroundColor $Border -NoNewline
+    Write-Host "  ██║      ██║     ██║   ██║██║   ██║ ██║  ██║ ╚════██║ ██║      ██╔══██║ ██╔═══╝  ██╔══╝    " -ForegroundColor $TitleColor -NoNewline
+    Write-Host "║" -ForegroundColor $Border
+    Write-Host "  ║" -ForegroundColor $Border -NoNewline
+    Write-Host "  ╚██████╗ ███████╗╚██████╔╝╚██████╔╝ ██████╔╝ ███████║ ╚██████╗ ██║  ██║ ██║      ███████╗  " -ForegroundColor $TitleColor -NoNewline
+    Write-Host "║" -ForegroundColor $Border
+    Write-Host "  ║" -ForegroundColor $Border -NoNewline
+    Write-Host "   ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═╝      ╚══════╝  " -ForegroundColor $TitleColor -NoNewline
+    Write-Host "║" -ForegroundColor $Border
+    Write-Host "  ║                                                                                        ║" -ForegroundColor $Border
+    Write-Host "  ║" -ForegroundColor $Border -NoNewline
+    Write-Host "                       ══╣ " -ForegroundColor $Border -NoNewline
+    Write-Host "N E X U S   5 . 2   T I T A N" -ForegroundColor $AccentColor -NoNewline
+    Write-Host " ╠══                               " -ForegroundColor $Border -NoNewline
+    Write-Host "║" -ForegroundColor $Border
+    Write-Host "  ║" -ForegroundColor $Border -NoNewline
+    Write-Host "              Sovereign-Forensic Multi-Cloud Intelligence Mesh                    " -ForegroundColor $TagColor -NoNewline
+    Write-Host "║" -ForegroundColor $Border
+    Write-Host "  ║                                                                                        ║" -ForegroundColor $Border
+    Write-Host "  ╚════════════════════════════════════════════════════════════════════════════════════════╝" -ForegroundColor $Border
+    Write-Host ""
+
     Write-ConsoleUi "Orchestrator Boot Sequence Initiated." "INFO"
     Write-ConsoleUi "Execution Mode: $RunMode" "INFO"
     Write-ConsoleUi "Log Target: $Global:LogFile" "INFO"
@@ -134,7 +164,7 @@ function Invoke-Spinner {
     $JobState = $Job.State
     Remove-Job -Job $Job
     
-    if ($JobState -eq 'Completed' -and (-not $JobResult.Contains("Failed"))) {
+    if ($JobState -eq 'Completed' -and ([string]$JobResult -notmatch "Failed")) {
         Write-Host "`n"
         Write-ConsoleUi "$Message -> OK" "SUCCESS"
         return $true

@@ -41,11 +41,11 @@ import traceback
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
-from rich.table import Table
-from rich import box
+from rich.console import Console  # type: ignore
+from rich.panel import Panel  # type: ignore
+from rich.text import Text  # type: ignore
+from rich.table import Table  # type: ignore
+from rich import box  # type: ignore
 
 console = Console()
 
@@ -64,7 +64,7 @@ def apply_safe_encoding_lock() -> None:
     
     try:
         if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')  # type: ignore
         elif sys.stdout:
             sys.stdout = io.TextIOWrapper(
                 sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True
@@ -74,7 +74,7 @@ def apply_safe_encoding_lock() -> None:
         
     try:
         if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
-            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')  # type: ignore
         elif sys.stderr:
             sys.stderr = io.TextIOWrapper(
                 sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True
@@ -122,7 +122,7 @@ def bootstrap_directories() -> None:
 # LOGGING SUBSYSTEM
 # ==============================================================================
 
-from utils.logger import configure_logging, get_logger
+from utils.logger import configure_logging, get_logger  # type: ignore
 
 def initialize_logging(log_level: str = "INFO", log_to_file: bool = True) -> logging.Logger:
     """
@@ -148,8 +148,8 @@ class TitanProcessManager:
     
     def __init__(self):
         self.logger = logging.getLogger("Cloudscape.Process")
-        self._shutdown_event = asyncio.Event() if asyncio.get_event_loop().is_running() else None
-        self._orchestrator = None
+        self._shutdown_event: Optional[asyncio.Event] = asyncio.Event() if asyncio.get_event_loop().is_running() else None
+        self._orchestrator: Any = None
         self._start_time = time.monotonic()
         self._install_signal_handlers()
     
@@ -173,8 +173,8 @@ class TitanProcessManager:
         if self._orchestrator:
             self._orchestrator.request_shutdown()
         
-        if self._shutdown_event:
-            self._shutdown_event.set()
+        if self._shutdown_event is not None:
+            self._shutdown_event.set()  # type: ignore
     
     def set_orchestrator(self, orchestrator) -> None:
         """Registers the orchestrator for signal-triggered shutdown."""
@@ -245,7 +245,7 @@ class HealthCheckRunner:
     
     def _check_python_version(self) -> bool:
         """Validates minimum Python version (3.10+)."""
-        major, minor = sys.version_info[:2]
+        major, minor = sys.version_info.major, sys.version_info.minor
         if major < 3 or (major == 3 and minor < 10):
             self.logger.error(f"Python 3.10+ required. Current: {major}.{minor}")
             self._record_check("python_version", False, f"{major}.{minor}")
@@ -262,18 +262,16 @@ class HealthCheckRunner:
         
         for pkg in required:
             try:
-                __import__(pkg)
+                import importlib
+                importlib.import_module(pkg)
             except ImportError:
-                missing.append(pkg)
-        
+                missing.append(pkg)        
         if missing:
             self.logger.warning(f"Missing packages: {', '.join(missing)}. Some features may be unavailable.")
             self._record_check("dependencies", False, {"missing": missing})
-            return len(missing) < 3  # Allow up to 2 missing non-critical packages
-        
+            return len(missing) < 3  # Allow up to 2 missing non-critical packages        
         self._record_check("dependencies", True, {"all_present": True})
-        return True
-    
+        return True    
     def _check_disk_space(self) -> bool:
         """
         Platform-agnostic disk space check using shutil.disk_usage.
@@ -287,10 +285,10 @@ class HealthCheckRunner:
             
             if free_gb < 1.0:
                 self.logger.warning(f"Low disk space: {free_gb:.1f}GB free ({pct_free:.1f}%)")
-                self._record_check("disk_space", False, {"free_gb": round(free_gb, 2), "pct_free": round(pct_free, 1)})
+                self._record_check("disk_space", False, {"free_gb": round(float(free_gb), 2), "pct_free": round(float(pct_free), 1)})  # type: ignore
             else:
                 self.logger.debug(f"Disk space: {free_gb:.1f}GB free of {total_gb:.1f}GB ({pct_free:.1f}%)")
-                self._record_check("disk_space", True, {"free_gb": round(free_gb, 2), "pct_free": round(pct_free, 1)})
+                self._record_check("disk_space", True, {"free_gb": round(float(free_gb), 2), "pct_free": round(float(pct_free), 1)})  # type: ignore
             
             return True  # Non-critical check
         except Exception as e:
@@ -301,7 +299,7 @@ class HealthCheckRunner:
     def _check_config_integrity(self) -> bool:
         """Validates that the configuration manager loaded successfully."""
         try:
-            from core.config import config as cfg
+            from core.config import config as cfg  # type: ignore
             if cfg.settings is None:
                 self._record_check("config_integrity", False, "Settings is None")
                 return False
@@ -345,7 +343,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
 Examples:
   python main.py                   # Single scan cycle (MOCK mode)
   python main.py --mode LIVE       # Single scan with live cloud APIs
-  python main.py --daemon          # Continuous daemon mode
+  python main.py --mode MOCK       # Force simulation mode
+  python main.py --api             # Run Native Application overlay server
   python main.py --health          # Pre-flight health checks only
   python main.py --schema          # Apply Neo4j schema constraints
   python main.py --verbose         # Debug-level logging
@@ -364,6 +363,10 @@ Examples:
     parser.add_argument(
         "--interval", type=int, default=300,
         help="Daemon scan interval in seconds (default: 300)"
+    )
+    parser.add_argument(
+        "--api", action="store_true",
+        help="Launch the internal React frontend API overlay server"
     )
     parser.add_argument(
         "--health", action="store_true",
@@ -399,8 +402,8 @@ Examples:
 
 async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None:
     """Executes the main pipeline based on parsed arguments."""
-    from core.config import config as cfg
-    from core.orchestrator import CloudScapeOrchestrator
+    from core.config import config as cfg  # type: ignore
+    from core.orchestrator import CloudScapeOrchestrator  # type: ignore
     
     # Override mode if specified
     if args.mode:
@@ -420,6 +423,11 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
     process_manager.set_orchestrator(orchestrator)
     
     try:
+        api_server = None
+        if args.api:
+            from api.server import start_api_server  # type: ignore
+            api_server = await start_api_server()
+            
         if args.daemon:
             # Daemon Mode: Continuous scan loop
             logger.info(f"Entering daemon mode. Scan interval: {args.interval}s")
@@ -439,6 +447,11 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
                 if not orchestrator._shutdown_requested:
                     logger.info(f"Sleeping {args.interval}s until next cycle...")
                     await asyncio.sleep(args.interval)
+        elif not args.daemon and args.api:
+            # Interactive API mode loop
+            logger.info("API Overlay running. Press Ctrl+C to shutdown.")
+            while not orchestrator._shutdown_requested:
+                await asyncio.sleep(1)
         else:
             # Single Scan Mode
             states = await orchestrator.run_full_pipeline()
@@ -464,6 +477,14 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             
             console.print()
             console.print(table)
+            
+        if args.api:
+            logger.info("API Overlay initialized. Keeping main thread alive. Press Ctrl+C to shutdown.")
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                pass
     
     except KeyboardInterrupt:
         logger.info("Pipeline interrupted by user.")
@@ -472,12 +493,14 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
         logger.debug(traceback.format_exc())
     finally:
         await orchestrator.shutdown()
+        if 'api_server' in locals() and api_server:
+            await api_server.stop()
 
 
 async def run_schema_init(logger: logging.Logger) -> None:
     """Applies Neo4j enterprise schema constraints."""
     try:
-        from utils.db_tools import GraphMaintenanceManager
+        from utils.db_tools import GraphMaintenanceManager  # type: ignore
         
         manager = GraphMaintenanceManager()
         if await manager.test_connectivity():
@@ -511,13 +534,14 @@ def main() -> None:
     
     # Banner
     banner_ascii = r"""
-   ______ __                 __  _____                           
-  / ____// /____  __  __   / /_ / ___/ _____  ____ _   ____    ___ 
- / /    / // __ \ / / / / / __ \\__ \ / ___// __ `/  / __ \  / _ \
-/ /___ / // /_/ // /_/ / / /_/ /___/ / /__ / /_/ /  / /_/ / /  __/
-\____//_/ \____/ \__,_/ /_.___//____/  \___/ \__, /  / .___/  \___/ 
-                  N E X U S   5 . 2   T I T A N
-          SOVEREIGN-FORENSIC MULTI-CLOUD INTELLIGENCE MESH
+   ██████╗ ██╗      ██████╗ ██╗   ██╗ ██████╗  ███████╗  ██████╗  █████╗  ██████╗  ███████╗
+  ██╔════╝ ██║     ██╔═══██╗██║   ██║ ██╔══██╗ ██╔════╝ ██╔════╝ ██╔══██╗ ██╔══██╗ ██╔════╝
+  ██║      ██║     ██║   ██║██║   ██║ ██║  ██║ ███████╗ ██║      ███████║ ██████╔╝ █████╗  
+  ██║      ██║     ██║   ██║██║   ██║ ██║  ██║ ╚════██║ ██║      ██╔══██║ ██╔═══╝  ██╔══╝  
+  ╚██████╗ ███████╗╚██████╔╝╚██████╔╝ ██████╔╝ ███████║ ╚██████╗ ██║  ██║ ██║      ███████╗
+   ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═╝      ╚══════╝
+                        N E X U S   5 . 2   T I T A N
+               A SOVEREIGN-FORENSIC MULTI-CLOUD INTELLIGENCE MESH
 """
     banner_panel = Panel(
         Text(banner_ascii, style="bold cyan", justify="center"),
@@ -545,7 +569,9 @@ def main() -> None:
     
     # PHASE 6: Windows AsyncIO Policy Fix
     if platform.system() == 'Windows':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        policy = getattr(asyncio, 'WindowsSelectorEventLoopPolicy', None)
+        if policy is not None:
+            asyncio.set_event_loop_policy(policy())
         logger.debug("Applied WindowsSelectorEventLoopPolicy for Windows compatibility.")
     
     # PHASE 7: Dispatch
