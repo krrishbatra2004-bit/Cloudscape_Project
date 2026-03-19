@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
+import itertools
 
-from neo4j import GraphDatabase, Driver, exceptions as neo4j_exceptions
+from neo4j import GraphDatabase, Driver, exceptions as neo4j_exceptions  # type: ignore
 
-from core.config import config, TenantConfig
+from core.config import config, TenantConfig  # type: ignore
 
 # ==============================================================================
 # CLOUDSCAPE NEXUS 5.2 TITAN - ENTERPRISE NEO4J GRAPH MESH SEEDER
@@ -68,8 +69,8 @@ class IngestionMetrics:
             },
             "performance": {
                 "batches": self.batch_count,
-                "ingestion_ms": round(self.ingestion_time_ms, 2),
-                "edge_synthesis_ms": round(self.edge_synthesis_time_ms, 2),
+                "ingestion_ms": float(f"{self.ingestion_time_ms:.2f}"),
+                "edge_synthesis_ms": float(f"{self.edge_synthesis_time_ms:.2f}"),
             },
             "graph_fingerprint": self.graph_fingerprint,
             "error_count": len(self.errors),
@@ -145,7 +146,9 @@ class EnterpriseGraphMeshSeeder:
                 auth=(self.neo4j_user, self.neo4j_password),
                 max_connection_pool_size=self.pool_size,
             )
-            self.driver.verify_connectivity()
+            driver = self.driver
+            assert driver is not None
+            driver.verify_connectivity()
             self.logger.info(f"Connected to Neo4j at {self.neo4j_uri}")
             return True
         except neo4j_exceptions.ServiceUnavailable:
@@ -161,8 +164,9 @@ class EnterpriseGraphMeshSeeder:
 
     def close(self) -> None:
         """Closes the Neo4j driver connection pool."""
-        if self.driver:
-            self.driver.close()
+        driver = self.driver
+        if driver is not None:
+            driver.close()
             self.logger.debug("Neo4j driver closed.")
 
     # --------------------------------------------------------------------------
@@ -261,8 +265,9 @@ class EnterpriseGraphMeshSeeder:
             n._update_count = coalesce(n._update_count, 0) + 1
         """
         
-        for i in range(0, len(nodes), self.batch_size):
-            batch = nodes[i:i + self.batch_size]
+        nodes_seq = list(nodes)
+        for i in range(0, len(nodes_seq), self.batch_size):
+            batch = list(itertools.islice(nodes_seq, i, i + self.batch_size))
             batch_data = []
             
             for node in batch:
@@ -286,7 +291,9 @@ class EnterpriseGraphMeshSeeder:
                 continue
             
             try:
-                with self.driver.session() as session:
+                driver = self.driver
+                assert driver is not None
+                with driver.session() as session:
                     result = session.write_transaction(
                         lambda tx: tx.run(merge_query, {"batch": batch_data}).consume()
                     )
@@ -373,6 +380,9 @@ class EnterpriseGraphMeshSeeder:
         
         try:
             trust_doc = json.loads(trust_doc_str) if isinstance(trust_doc_str, str) else trust_doc_str
+            
+            if not isinstance(trust_doc, dict):
+                return
             
             for statement in trust_doc.get("Statement", []):
                 if statement.get("Effect") != "Allow":
@@ -466,8 +476,9 @@ class EnterpriseGraphMeshSeeder:
             if any(e.get("extra", {}).get("is_identity_bridge") for e in edges):
                 query += ", r.is_identity_bridge = edge.is_bridge, r.app_id = edge.app_id"
             
-            for i in range(0, len(edges), self.batch_size):
-                batch = edges[i:i + self.batch_size]
+            edges_seq = list(edges)
+            for i in range(0, len(edges_seq), self.batch_size):
+                batch = list(itertools.islice(edges_seq, i, i + self.batch_size))
                 batch_data = [{
                     "source": e["source"],
                     "target": e["target"],
@@ -477,7 +488,9 @@ class EnterpriseGraphMeshSeeder:
                 } for e in batch]
                 
                 try:
-                    with self.driver.session() as session:
+                    driver = self.driver
+                    assert driver is not None
+                    with driver.session() as session:
                         result = session.execute_write(
                             lambda tx: tx.run(query, {"edges": batch_data}).consume()
                         )
@@ -540,7 +553,9 @@ class EnterpriseGraphMeshSeeder:
         } for ref in unique_phantoms.values()]
         
         try:
-            with self.driver.session() as session:
+            driver = self.driver
+            assert driver is not None
+            with driver.session() as session:
                 result = session.execute_write(
                     lambda tx: tx.run(phantom_query, {"phantoms": phantom_data}).consume()
                 )
@@ -563,7 +578,9 @@ class EnterpriseGraphMeshSeeder:
         Used to detect structural changes between ingestion cycles.
         """
         try:
-            with self.driver.session() as session:
+            driver = self.driver
+            assert driver is not None
+            with driver.session() as session:
                 result = session.run("""
                 MATCH (n)
                 WHERE n:CloudResource OR n:Resource
@@ -574,7 +591,8 @@ class EnterpriseGraphMeshSeeder:
                 
                 if record:
                     fingerprint_data = f"{record['nodes']}:{record['total_risk']}"
-                    return hashlib.sha256(fingerprint_data.encode()).hexdigest()[:16]
+                    digest = hashlib.sha256(fingerprint_data.encode()).hexdigest()
+                    return "".join(itertools.islice(digest, 16))
                     
         except Exception as e:
             self.logger.debug(f"  Fingerprint computation failed: {e}")

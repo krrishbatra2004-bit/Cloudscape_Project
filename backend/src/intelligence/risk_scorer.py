@@ -4,12 +4,13 @@ import re
 import math
 import time
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple, Set, Union
+from typing import Any, Dict, List, Optional, Tuple, Set, Union, cast
 from dataclasses import dataclass, field
 from enum import Enum
+import traceback
 
 # Core Titan Configuration Bindings
-from core.config import config, TenantConfig
+from core.config import config, TenantConfig  # type: ignore
 
 # ==============================================================================
 # CLOUDSCAPE NEXUS 5.1 TITAN - ENTERPRISE RISK SCORING ENGINE (AETHER-G)
@@ -194,7 +195,8 @@ class ComplianceMatrixEngine:
         penalty = 0.0
         failures = []
         
-        region = properties.get("region", tags.get("Region", "")).lower()
+        region_val = properties.get("region") or tags.get("Region", "")
+        region = str(region_val).lower() if region_val is not None else ""
         eu_regions = ["eu-west-1", "eu-central-1", "eu-north-1", "westeurope", "northeurope"]
         
         # If the tenant is tagged GDPR but the resource is launched outside the EU
@@ -315,6 +317,7 @@ class RiskScoringEngine:
     normalized floating-point value.
     """
 
+
     def __init__(self):
         self.logger = logging.getLogger("CloudScape.Logic.RiskScorer.Master")
         self.metrics = RiskMetrics()
@@ -323,16 +326,24 @@ class RiskScoringEngine:
         self.compliance_matrix = ComplianceMatrixEngine()
         self.cvss_calculator = CVSSCalculator()
         
+        # Explicit instance variable typing to bypass Pyre2 base undefined errors
+        self.enabled: bool = False
+        self.exposure_penalty: float = 0.05
+        self.admin_penalty: float = 0.04
+        self.cvss_multiplier: float = 1.0
+        self.finops_enabled: bool = False
+        self.finops_multiplier: float = 1.0
+        
         # Pydantic Configuration Binding with Failsafes
         try:
             risk_cfg = config.settings.logic_engine.risk_scoring
-            self.enabled = risk_cfg.enabled
-            self.exposure_penalty = risk_cfg.public_exposure_penalty / 100.0
-            self.admin_penalty = risk_cfg.admin_privilege_penalty / 100.0
-            self.cvss_multiplier = risk_cfg.cvss_base_multiplier
+            self.enabled = bool(risk_cfg.enabled)
+            self.exposure_penalty = float(risk_cfg.public_exposure_penalty) / 100.0
+            self.admin_penalty = float(risk_cfg.admin_privilege_penalty) / 100.0
+            self.cvss_multiplier = float(risk_cfg.cvss_base_multiplier)
             
-            self.finops_enabled = config.settings.finops.enabled
-            self.finops_multiplier = config.settings.finops.cost_gravity_multiplier
+            self.finops_enabled = bool(config.settings.finops.enabled)
+            self.finops_multiplier = float(config.settings.finops.cost_gravity_multiplier)
         except AttributeError as e:
             self.logger.critical(f"FATAL: Risk Engine failed to bind to Pydantic: {e}")
             self.enabled = False
@@ -469,11 +480,15 @@ class RiskScoringEngine:
     def _evaluate_network_exposure(self, properties: Dict, resource_type: str, profile: DimensionalRiskProfile) -> float:
         """Deep parsing for Public IPs, 0.0.0.0/0 SGs, and Internet Gateways."""
         penalty = 0.0
+        try:
+            exp_pen = cast(float, float(config.settings.logic_engine.risk_scoring.public_exposure_penalty) / 100.0)
+        except Exception:
+            exp_pen = 0.05
         prop_str = str(properties).lower()
 
         # 1. Public IP Assignments
         if "publicipaddress" in prop_str or properties.get("PublicIpAddress"):
-            penalty += self.exposure_penalty
+            penalty += exp_pen
             profile.threat_vectors.append(ThreatVectorType.NETWORK_EXPOSURE.value + ": Public IP")
 
         # 2. Open Security Groups (Deep CIDR Parsing)
@@ -487,19 +502,23 @@ class RiskScoringEngine:
                         port_range = f"{rule.get('FromPort', 'All')}-{rule.get('ToPort', 'All')}"
                         
                         if port_range == "All-All" or rule.get("IpProtocol") == "-1":
-                            penalty += self.exposure_penalty * 2.0
+                            penalty += exp_pen * 2.0  # type: ignore
                             profile.threat_vectors.append("NETWORK_EXPOSURE: Open All Ports (0.0.0.0/0)")
                         elif "22" in port_range or "3389" in port_range: # SSH/RDP
-                            penalty += self.exposure_penalty * 1.8
+                            penalty += exp_pen * 1.8  # type: ignore
                             profile.threat_vectors.append("NETWORK_EXPOSURE: Open Admin Port (0.0.0.0/0)")
                         else:
-                            penalty += self.exposure_penalty
+                            penalty += exp_pen  # type: ignore
                             
         return penalty
 
     def _evaluate_iam_blast_radius(self, properties: Dict, resource_type: str, profile: DimensionalRiskProfile) -> float:
         """Deep Abstract Syntax Tree (AST) style parsing for IAM policies."""
         penalty = 0.0
+        try:
+            adm_pen = cast(float, float(config.settings.logic_engine.risk_scoring.admin_privilege_penalty) / 100.0)
+        except Exception:
+            adm_pen = 0.04
         
         if resource_type not in ["role", "user", "group", "policy", "roleassignment"]:
             return penalty
@@ -533,19 +552,19 @@ class RiskScoringEngine:
 
                 # 1. Wildcard Administrator
                 if "*" in actions_str or "iam:*" in actions_str:
-                    penalty += self.admin_penalty * 2.5
+                    penalty += adm_pen * 2.5  # type: ignore
                     profile.threat_vectors.append(ThreatVectorType.IAM_OVER_PRIVILEGE.value + ": Wildcard Admin")
                     continue # Already max penalty for this statement
 
                 # 2. Privilege Escalation Paths
                 escalation_keywords = ["iam:passrole", "iam:putrolepolicy", "iam:createaccesskey"]
                 if any(kw in actions_str for kw in escalation_keywords):
-                    penalty += self.admin_penalty * 1.5
+                    penalty += adm_pen * 1.5  # type: ignore
                     profile.threat_vectors.append(ThreatVectorType.IAM_OVER_PRIVILEGE.value + ": Lateral Movement")
 
                 # 3. Data Exfiltration
                 if "s3:getobject" in actions_str and stmt.get("Resource") == "*":
-                    penalty += self.admin_penalty
+                    penalty += adm_pen  # type: ignore
                     profile.threat_vectors.append(ThreatVectorType.DATA_EXFILTRATION.value + ": Wildcard Data Read")
 
                 # 4. Condition Bypass (Missing MFA)
@@ -553,7 +572,7 @@ class RiskScoringEngine:
                 if not condition or "MultiFactorAuthPresent" not in str(condition):
                     # If they have strong privileges without requiring MFA, small penalty
                     if "iam:create" in actions_str or "ec2:run" in actions_str:
-                        penalty += self.admin_penalty * 0.5
+                        penalty += adm_pen * 0.5  # type: ignore
                         profile.threat_vectors.append("IAM_RISK: High Privilege without MFA Condition")
 
         return penalty
@@ -634,7 +653,12 @@ class RiskScoringEngine:
         penalty = 0.0
         
         if resource_type in ["autoscalinggroup", "virtualmachinescaleset"]:
-            max_size = int(properties.get("MaxSize", properties.get("sku", {}).get("capacity", 1)))
+            sku = properties.get("sku") or {}
+            max_size_val = properties.get("MaxSize") or sku.get("capacity", 1)
+            try:
+                max_size = int(max_size_val) if max_size_val is not None else 1
+            except (ValueError, TypeError):
+                max_size = 1
             
             # If the max size is massive, the cryptomining blast radius is huge.
             if max_size >= 100:
@@ -669,8 +693,8 @@ class RiskScoringEngine:
         steepness_k = 0.8
         sigmoid_val = (2.0 / (1.0 + math.exp(-steepness_k * raw_score))) - 1.0
         
-        # Ensure floating point purity
-        return round(min(max(sigmoid_val, 0.0), 1.0), 3)
+        clamped_val = 1.0 if sigmoid_val > 1.0 else (0.0 if sigmoid_val < 0.0 else sigmoid_val)
+        return float(f"{clamped_val:.3f}")
 
 # Export Global Singleton
 # Preserves configuration state and ML weightings in memory.
